@@ -28,20 +28,8 @@
 extern "C" {
 #endif
 
-typedef struct mongoReadTask {
-    int type;
-    int elements; /* number of elements in multibulk container */
-    int idx; /* index in parent (array) object */
-    void *obj; /* holds user-generated value for a read task */
-    struct mongoReadTask *parent; /* parent task */
-    void *privdata; /* user-settable arbitrary field */
-} mongoReadTask;
-
 typedef struct mongoReplyObjectFunctions {
-    void *(*createString)(const mongoReadTask*, char*, size_t);
-    void *(*createArray)(const mongoReadTask*, int);
-    void *(*createInteger)(const mongoReadTask*, long long);
-    void *(*createNil)(const mongoReadTask*);
+    void *(*createReply)(char*, size_t);
     void (*freeObject)(void*);
 } mongoReplyObjectFunctions;
 
@@ -53,9 +41,7 @@ typedef struct mongoReader {
     size_t pos; /* Buffer cursor */
     size_t len; /* Buffer length */
     size_t maxbuf; /* Max length of unused buffer */
-
-    mongoReadTask rstack[9];
-    int ridx; /* Index of current read task */
+    size_t pktlen; /* length of current packet. */
     void *reply; /* Temporary reply pointer */
 
     mongoReplyObjectFunctions *fn;
@@ -63,7 +49,10 @@ typedef struct mongoReader {
 } mongoReader;
 
 /* Public API for the protocol parser. */
+
+mongoReader *mongoReaderCreate(void);
 mongoReader *mongoReaderCreateWithFunctions(mongoReplyObjectFunctions *fn);
+
 void mongoReaderFree(mongoReader *r);
 int mongoReaderFeed(mongoReader *r, const char *buf, size_t len);
 int mongoReaderGetReply(mongoReader *r, void **reply);

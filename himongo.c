@@ -11,20 +11,6 @@
 #include "sds.h"
 
 static mongoReply *createReplyObject(int type);
-static void *createStringObject(const mongoReadTask *task, char *str, size_t len);
-static void *createArrayObject(const mongoReadTask *task, int elements);
-static void *createIntegerObject(const mongoReadTask *task, long long value);
-static void *createNilObject(const mongoReadTask *task);
-
-/* Default set of functions to build the reply. Keep in mind that such a
- * function returning NULL is interpreted as OOM. */
-static mongoReplyObjectFunctions defaultFunctions = {
-    createStringObject,
-    createArrayObject,
-    createIntegerObject,
-    createNilObject,
-    freeReplyObject
-};
 
 /* Create a reply object */
 static mongoReply *createReplyObject(int type) {
@@ -64,95 +50,6 @@ void freeReplyObject(void *reply) {
         break;
     }
     free(r);
-}
-
-static void *createStringObject(const mongoReadTask *task, char *str, size_t len) {
-    mongoReply *r, *parent;
-    char *buf;
-
-    r = createReplyObject(task->type);
-    if (r == NULL)
-        return NULL;
-
-    buf = malloc(len+1);
-    if (buf == NULL) {
-        freeReplyObject(r);
-        return NULL;
-    }
-
-    assert(task->type == MONGO_REPLY_ERROR  ||
-           task->type == MONGO_REPLY_STATUS ||
-           task->type == MONGO_REPLY_STRING);
-
-    /* Copy string value */
-    memcpy(buf,str,len);
-    buf[len] = '\0';
-    r->str = buf;
-    r->len = len;
-
-    if (task->parent) {
-        parent = task->parent->obj;
-        assert(parent->type == MONGO_REPLY_ARRAY);
-        parent->element[task->idx] = r;
-    }
-    return r;
-}
-
-static void *createArrayObject(const mongoReadTask *task, int elements) {
-    mongoReply *r, *parent;
-
-    r = createReplyObject(MONGO_REPLY_ARRAY);
-    if (r == NULL)
-        return NULL;
-
-    if (elements > 0) {
-        r->element = calloc(elements,sizeof(mongoReply*));
-        if (r->element == NULL) {
-            freeReplyObject(r);
-            return NULL;
-        }
-    }
-
-    r->elements = elements;
-
-    if (task->parent) {
-        parent = task->parent->obj;
-        assert(parent->type == MONGO_REPLY_ARRAY);
-        parent->element[task->idx] = r;
-    }
-    return r;
-}
-
-static void *createIntegerObject(const mongoReadTask *task, long long value) {
-    mongoReply *r, *parent;
-
-    r = createReplyObject(MONGO_REPLY_INTEGER);
-    if (r == NULL)
-        return NULL;
-
-    r->integer = value;
-
-    if (task->parent) {
-        parent = task->parent->obj;
-        assert(parent->type == MONGO_REPLY_ARRAY);
-        parent->element[task->idx] = r;
-    }
-    return r;
-}
-
-static void *createNilObject(const mongoReadTask *task) {
-    mongoReply *r, *parent;
-
-    r = createReplyObject(MONGO_REPLY_NIL);
-    if (r == NULL)
-        return NULL;
-
-    if (task->parent) {
-        parent = task->parent->obj;
-        assert(parent->type == MONGO_REPLY_ARRAY);
-        parent->element[task->idx] = r;
-    }
-    return r;
 }
 
 /* Return the number of digits of 'v' when converted to string in radix 10.
@@ -550,10 +447,6 @@ void __mongoSetError(mongoContext *c, int type, const char *str) {
         assert(type == MONGO_ERR_IO);
         __mongo_strerror_r(errno, c->errstr, sizeof(c->errstr));
     }
-}
-
-mongoReader *mongoReaderCreate(void) {
-    return mongoReaderCreateWithFunctions(&defaultFunctions);
 }
 
 static mongoContext *mongoContextInit(void) {
@@ -984,5 +877,12 @@ void *mongoCommand(mongoContext *c, const char *format, ...) {
 void *mongoCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen) {
     if (mongoAppendCommandArgv(c,argc,argv,argvlen) != MONGO_OK)
         return NULL;
+    return __mongoBlockForReply(c);
+}
+
+void *mongoQuery(mongoContext *c, bson_t *q, bson_t *rfields, int nrSkip, int nrReturn) {
+    char buf[BUFSIZ];
+    size_t remain = BUFSIZ;
+    snprintf(buf, BUFSIZ, "<iiii")
     return __mongoBlockForReply(c);
 }

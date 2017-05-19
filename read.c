@@ -8,8 +8,17 @@
 #include <errno.h>
 #include <ctype.h>
 
+#include "endianconv.h"
 #include "read.h"
 #include "sds.h"
+#include "proto.h"
+
+/* Default set of functions to build the reply. Keep in mind that such a
+ * function returning NULL is interpreted as error. */
+static mongoReplyObjectFunctions defaultFunctions = {
+        replyMsgCreateFromBytes,
+        replyMsgFree
+};
 
 static void __mongoReaderSetError(mongoReader *r, int type, const char *str) {
     size_t len;
@@ -25,9 +34,6 @@ static void __mongoReaderSetError(mongoReader *r, int type, const char *str) {
         r->buf = NULL;
         r->pos = r->len = 0;
     }
-
-    /* Reset task stack. */
-    r->ridx = -1;
 
     /* Set error. */
     r->err = type;
@@ -74,311 +80,8 @@ static void __mongoReaderSetErrorOOM(mongoReader *r) {
     __mongoReaderSetError(r,MONGO_ERR_OOM,"Out of memory");
 }
 
-static char *readBytes(mongoReader *r, unsigned int bytes) {
-    char *p;
-    if (r->len-r->pos >= bytes) {
-        p = r->buf+r->pos;
-        r->pos += bytes;
-        return p;
-    }
-    return NULL;
-}
-
-/* Find pointer to \r\n. */
-static char *seekNewline(char *s, size_t len) {
-    int pos = 0;
-    int _len = len-1;
-
-    /* Position should be < len-1 because the character at "pos" should be
-     * followed by a \n. Note that strchr cannot be used because it doesn't
-     * allow to search a limited length and the buffer that is being searched
-     * might not have a trailing NULL character. */
-    while (pos < _len) {
-        while(pos < _len && s[pos] != '\r') pos++;
-        if (pos==_len) {
-            /* Not found. */
-            return NULL;
-        } else {
-            if (s[pos+1] == '\n') {
-                /* Found. */
-                return s+pos;
-            } else {
-                /* Continue searching. */
-                pos++;
-            }
-        }
-    }
-    return NULL;
-}
-
-/* Read a long long value starting at *s, under the assumption that it will be
- * terminated by \r\n. Ambiguously returns -1 for unexpected input. */
-static long long readLongLong(char *s) {
-    long long v = 0;
-    int dec, mult = 1;
-    char c;
-
-    if (*s == '-') {
-        mult = -1;
-        s++;
-    } else if (*s == '+') {
-        mult = 1;
-        s++;
-    }
-
-    while ((c = *(s++)) != '\r') {
-        dec = c - '0';
-        if (dec >= 0 && dec < 10) {
-            v *= 10;
-            v += dec;
-        } else {
-            /* Should not happen... */
-            return -1;
-        }
-    }
-
-    return mult*v;
-}
-
-static char *readLine(mongoReader *r, int *_len) {
-    char *p, *s;
-    int len;
-
-    p = r->buf+r->pos;
-    s = seekNewline(p,(r->len-r->pos));
-    if (s != NULL) {
-        len = s-(r->buf+r->pos);
-        r->pos += len+2; /* skip \r\n */
-        if (_len) *_len = len;
-        return p;
-    }
-    return NULL;
-}
-
-static void moveToNextTask(mongoReader *r) {
-    mongoReadTask *cur, *prv;
-    while (r->ridx >= 0) {
-        /* Return a.s.a.p. when the stack is now empty. */
-        if (r->ridx == 0) {
-            r->ridx--;
-            return;
-        }
-
-        cur = &(r->rstack[r->ridx]);
-        prv = &(r->rstack[r->ridx-1]);
-        assert(prv->type == MONGO_REPLY_ARRAY);
-        if (cur->idx == prv->elements-1) {
-            r->ridx--;
-        } else {
-            /* Reset the type because the next item can be anything */
-            assert(cur->idx < prv->elements);
-            cur->type = -1;
-            cur->elements = -1;
-            cur->idx++;
-            return;
-        }
-    }
-}
-
-static int processLineItem(mongoReader *r) {
-    mongoReadTask *cur = &(r->rstack[r->ridx]);
-    void *obj;
-    char *p;
-    int len;
-
-    if ((p = readLine(r,&len)) != NULL) {
-        if (cur->type == MONGO_REPLY_INTEGER) {
-            if (r->fn && r->fn->createInteger)
-                obj = r->fn->createInteger(cur,readLongLong(p));
-            else
-                obj = (void*)MONGO_REPLY_INTEGER;
-        } else {
-            /* Type will be error or status. */
-            if (r->fn && r->fn->createString)
-                obj = r->fn->createString(cur,p,len);
-            else
-                obj = (void*)(size_t)(cur->type);
-        }
-
-        if (obj == NULL) {
-            __mongoReaderSetErrorOOM(r);
-            return MONGO_ERR;
-        }
-
-        /* Set reply if this is the root object. */
-        if (r->ridx == 0) r->reply = obj;
-        moveToNextTask(r);
-        return MONGO_OK;
-    }
-
-    return MONGO_ERR;
-}
-
-static int processBulkItem(mongoReader *r) {
-    mongoReadTask *cur = &(r->rstack[r->ridx]);
-    void *obj = NULL;
-    char *p, *s;
-    long len;
-    unsigned long bytelen;
-    int success = 0;
-
-    p = r->buf+r->pos;
-    s = seekNewline(p,r->len-r->pos);
-    if (s != NULL) {
-        p = r->buf+r->pos;
-        bytelen = s-(r->buf+r->pos)+2; /* include \r\n */
-        len = readLongLong(p);
-
-        if (len < 0) {
-            /* The nil object can always be created. */
-            if (r->fn && r->fn->createNil)
-                obj = r->fn->createNil(cur);
-            else
-                obj = (void*)MONGO_REPLY_NIL;
-            success = 1;
-        } else {
-            /* Only continue when the buffer contains the entire bulk item. */
-            bytelen += len+2; /* include \r\n */
-            if (r->pos+bytelen <= r->len) {
-                if (r->fn && r->fn->createString)
-                    obj = r->fn->createString(cur,s+2,len);
-                else
-                    obj = (void*)MONGO_REPLY_STRING;
-                success = 1;
-            }
-        }
-
-        /* Proceed when obj was created. */
-        if (success) {
-            if (obj == NULL) {
-                __mongoReaderSetErrorOOM(r);
-                return MONGO_ERR;
-            }
-
-            r->pos += bytelen;
-
-            /* Set reply if this is the root object. */
-            if (r->ridx == 0) r->reply = obj;
-            moveToNextTask(r);
-            return MONGO_OK;
-        }
-    }
-
-    return MONGO_ERR;
-}
-
-static int processMultiBulkItem(mongoReader *r) {
-    mongoReadTask *cur = &(r->rstack[r->ridx]);
-    void *obj;
-    char *p;
-    long elements;
-    int root = 0;
-
-    /* Set error for nested multi bulks with depth > 7 */
-    if (r->ridx == 8) {
-        __mongoReaderSetError(r,MONGO_ERR_PROTOCOL,
-            "No support for nested multi bulk replies with depth > 7");
-        return MONGO_ERR;
-    }
-
-    if ((p = readLine(r,NULL)) != NULL) {
-        elements = readLongLong(p);
-        root = (r->ridx == 0);
-
-        if (elements == -1) {
-            if (r->fn && r->fn->createNil)
-                obj = r->fn->createNil(cur);
-            else
-                obj = (void*)MONGO_REPLY_NIL;
-
-            if (obj == NULL) {
-                __mongoReaderSetErrorOOM(r);
-                return MONGO_ERR;
-            }
-
-            moveToNextTask(r);
-        } else {
-            if (r->fn && r->fn->createArray)
-                obj = r->fn->createArray(cur,elements);
-            else
-                obj = (void*)MONGO_REPLY_ARRAY;
-
-            if (obj == NULL) {
-                __mongoReaderSetErrorOOM(r);
-                return MONGO_ERR;
-            }
-
-            /* Modify task stack when there are more than 0 elements. */
-            if (elements > 0) {
-                cur->elements = elements;
-                cur->obj = obj;
-                r->ridx++;
-                r->rstack[r->ridx].type = -1;
-                r->rstack[r->ridx].elements = -1;
-                r->rstack[r->ridx].idx = 0;
-                r->rstack[r->ridx].obj = NULL;
-                r->rstack[r->ridx].parent = cur;
-                r->rstack[r->ridx].privdata = r->privdata;
-            } else {
-                moveToNextTask(r);
-            }
-        }
-
-        /* Set reply if this is the root object. */
-        if (root) r->reply = obj;
-        return MONGO_OK;
-    }
-
-    return MONGO_ERR;
-}
-
-static int processItem(mongoReader *r) {
-    mongoReadTask *cur = &(r->rstack[r->ridx]);
-    char *p;
-
-    /* check if we need to read type */
-    if (cur->type < 0) {
-        if ((p = readBytes(r,1)) != NULL) {
-            switch (p[0]) {
-            case '-':
-                cur->type = MONGO_REPLY_ERROR;
-                break;
-            case '+':
-                cur->type = MONGO_REPLY_STATUS;
-                break;
-            case ':':
-                cur->type = MONGO_REPLY_INTEGER;
-                break;
-            case '$':
-                cur->type = MONGO_REPLY_STRING;
-                break;
-            case '*':
-                cur->type = MONGO_REPLY_ARRAY;
-                break;
-            default:
-                __mongoReaderSetErrorProtocolByte(r,*p);
-                return MONGO_ERR;
-            }
-        } else {
-            /* could not consume 1 byte */
-            return MONGO_ERR;
-        }
-    }
-
-    /* process typed item */
-    switch(cur->type) {
-    case MONGO_REPLY_ERROR:
-    case MONGO_REPLY_STATUS:
-    case MONGO_REPLY_INTEGER:
-        return processLineItem(r);
-    case MONGO_REPLY_STRING:
-        return processBulkItem(r);
-    case MONGO_REPLY_ARRAY:
-        return processMultiBulkItem(r);
-    default:
-        assert(NULL);
-        return MONGO_ERR; /* Avoid warning. */
-    }
+mongoReader *mongoReaderCreate(void) {
+    return mongoReaderCreateWithFunctions(&defaultFunctions);
 }
 
 mongoReader *mongoReaderCreateWithFunctions(mongoReplyObjectFunctions *fn) {
@@ -398,7 +101,6 @@ mongoReader *mongoReaderCreateWithFunctions(mongoReplyObjectFunctions *fn) {
         return NULL;
     }
 
-    r->ridx = -1;
     return r;
 }
 
@@ -454,23 +156,15 @@ int mongoReaderGetReply(mongoReader *r, void **reply) {
     /* When the buffer is empty, there will never be a reply. */
     if (r->len == 0)
         return MONGO_OK;
+    if (r->len - r->pos < 4)
+        return MONGO_OK;
+    if (r->pktlen == 0) r->pktlen = load32le(r->buf+r->pos);
+    if (r->len - r->pos < r->pktlen) return MONGO_OK;
+    /* create a reply object */
+    r->reply = r->fn->createReply(r->buf+r->pos, r->len-r->pos);
 
-    /* Set first item to process when the stack is empty. */
-    if (r->ridx == -1) {
-        r->rstack[0].type = -1;
-        r->rstack[0].elements = -1;
-        r->rstack[0].idx = -1;
-        r->rstack[0].obj = NULL;
-        r->rstack[0].parent = NULL;
-        r->rstack[0].privdata = r->privdata;
-        r->ridx = 0;
-    }
-
-    /* Process items in reply. */
-    while (r->ridx >= 0)
-        if (processItem(r) != MONGO_OK)
-            break;
-
+    r->pos += r->pktlen;
+    r->pktlen = 0;
     /* Return ASAP when an error occurred. */
     if (r->err)
         return MONGO_ERR;
@@ -484,10 +178,8 @@ int mongoReaderGetReply(mongoReader *r, void **reply) {
     }
 
     /* Emit a reply when there is one. */
-    if (r->ridx == -1) {
-        if (reply != NULL)
-            *reply = r->reply;
-        r->reply = NULL;
-    }
+    if (reply != NULL)
+        *reply = r->reply;
+    r->reply = NULL;
     return MONGO_OK;
 }

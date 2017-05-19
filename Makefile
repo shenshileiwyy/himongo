@@ -3,7 +3,7 @@
 # Copyright (C) 2010-2011 Pieter Noordhuis <pcnoordhuis at gmail dot com>
 # This file is released under the BSD license, see the COPYING file
 
-OBJ=net.o himongo.o sds.o async.o read.o
+OBJ=net.o himongo.o sds.o async.o read.o endianconv.o
 EXAMPLES=himongo-example himongo-example-libevent himongo-example-libev himongo-example-glib
 TESTS=himongo-test
 LIBNAME=libhimongo
