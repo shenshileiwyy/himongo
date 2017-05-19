@@ -1,35 +1,3 @@
-/*
- * Copyright (c) 2009-2011, Salvatore Sanfilippo <antirez at gmail dot com>
- * Copyright (c) 2010-2011, Pieter Noordhuis <pcnoordhuis at gmail dot com>
- *
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *   * Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
- *   * Neither the name of Redis nor the names of its contributors may be used
- *     to endorse or promote products derived from this software without
- *     specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-
 #include "fmacros.h"
 #include <string.h>
 #include <stdlib.h>
@@ -43,7 +11,7 @@
 #include "read.h"
 #include "sds.h"
 
-static void __redisReaderSetError(redisReader *r, int type, const char *str) {
+static void __mongoReaderSetError(mongoReader *r, int type, const char *str) {
     size_t len;
 
     if (r->reply != NULL && r->fn && r->fn->freeObject) {
@@ -93,20 +61,20 @@ static size_t chrtos(char *buf, size_t size, char byte) {
     return len;
 }
 
-static void __redisReaderSetErrorProtocolByte(redisReader *r, char byte) {
+static void __mongoReaderSetErrorProtocolByte(mongoReader *r, char byte) {
     char cbuf[8], sbuf[128];
 
     chrtos(cbuf,sizeof(cbuf),byte);
     snprintf(sbuf,sizeof(sbuf),
         "Protocol error, got %s as reply type byte", cbuf);
-    __redisReaderSetError(r,REDIS_ERR_PROTOCOL,sbuf);
+    __mongoReaderSetError(r,MONGO_ERR_PROTOCOL,sbuf);
 }
 
-static void __redisReaderSetErrorOOM(redisReader *r) {
-    __redisReaderSetError(r,REDIS_ERR_OOM,"Out of memory");
+static void __mongoReaderSetErrorOOM(mongoReader *r) {
+    __mongoReaderSetError(r,MONGO_ERR_OOM,"Out of memory");
 }
 
-static char *readBytes(redisReader *r, unsigned int bytes) {
+static char *readBytes(mongoReader *r, unsigned int bytes) {
     char *p;
     if (r->len-r->pos >= bytes) {
         p = r->buf+r->pos;
@@ -172,7 +140,7 @@ static long long readLongLong(char *s) {
     return mult*v;
 }
 
-static char *readLine(redisReader *r, int *_len) {
+static char *readLine(mongoReader *r, int *_len) {
     char *p, *s;
     int len;
 
@@ -187,8 +155,8 @@ static char *readLine(redisReader *r, int *_len) {
     return NULL;
 }
 
-static void moveToNextTask(redisReader *r) {
-    redisReadTask *cur, *prv;
+static void moveToNextTask(mongoReader *r) {
+    mongoReadTask *cur, *prv;
     while (r->ridx >= 0) {
         /* Return a.s.a.p. when the stack is now empty. */
         if (r->ridx == 0) {
@@ -198,7 +166,7 @@ static void moveToNextTask(redisReader *r) {
 
         cur = &(r->rstack[r->ridx]);
         prv = &(r->rstack[r->ridx-1]);
-        assert(prv->type == REDIS_REPLY_ARRAY);
+        assert(prv->type == MONGO_REPLY_ARRAY);
         if (cur->idx == prv->elements-1) {
             r->ridx--;
         } else {
@@ -212,18 +180,18 @@ static void moveToNextTask(redisReader *r) {
     }
 }
 
-static int processLineItem(redisReader *r) {
-    redisReadTask *cur = &(r->rstack[r->ridx]);
+static int processLineItem(mongoReader *r) {
+    mongoReadTask *cur = &(r->rstack[r->ridx]);
     void *obj;
     char *p;
     int len;
 
     if ((p = readLine(r,&len)) != NULL) {
-        if (cur->type == REDIS_REPLY_INTEGER) {
+        if (cur->type == MONGO_REPLY_INTEGER) {
             if (r->fn && r->fn->createInteger)
                 obj = r->fn->createInteger(cur,readLongLong(p));
             else
-                obj = (void*)REDIS_REPLY_INTEGER;
+                obj = (void*)MONGO_REPLY_INTEGER;
         } else {
             /* Type will be error or status. */
             if (r->fn && r->fn->createString)
@@ -233,21 +201,21 @@ static int processLineItem(redisReader *r) {
         }
 
         if (obj == NULL) {
-            __redisReaderSetErrorOOM(r);
-            return REDIS_ERR;
+            __mongoReaderSetErrorOOM(r);
+            return MONGO_ERR;
         }
 
         /* Set reply if this is the root object. */
         if (r->ridx == 0) r->reply = obj;
         moveToNextTask(r);
-        return REDIS_OK;
+        return MONGO_OK;
     }
 
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-static int processBulkItem(redisReader *r) {
-    redisReadTask *cur = &(r->rstack[r->ridx]);
+static int processBulkItem(mongoReader *r) {
+    mongoReadTask *cur = &(r->rstack[r->ridx]);
     void *obj = NULL;
     char *p, *s;
     long len;
@@ -266,7 +234,7 @@ static int processBulkItem(redisReader *r) {
             if (r->fn && r->fn->createNil)
                 obj = r->fn->createNil(cur);
             else
-                obj = (void*)REDIS_REPLY_NIL;
+                obj = (void*)MONGO_REPLY_NIL;
             success = 1;
         } else {
             /* Only continue when the buffer contains the entire bulk item. */
@@ -275,7 +243,7 @@ static int processBulkItem(redisReader *r) {
                 if (r->fn && r->fn->createString)
                     obj = r->fn->createString(cur,s+2,len);
                 else
-                    obj = (void*)REDIS_REPLY_STRING;
+                    obj = (void*)MONGO_REPLY_STRING;
                 success = 1;
             }
         }
@@ -283,8 +251,8 @@ static int processBulkItem(redisReader *r) {
         /* Proceed when obj was created. */
         if (success) {
             if (obj == NULL) {
-                __redisReaderSetErrorOOM(r);
-                return REDIS_ERR;
+                __mongoReaderSetErrorOOM(r);
+                return MONGO_ERR;
             }
 
             r->pos += bytelen;
@@ -292,15 +260,15 @@ static int processBulkItem(redisReader *r) {
             /* Set reply if this is the root object. */
             if (r->ridx == 0) r->reply = obj;
             moveToNextTask(r);
-            return REDIS_OK;
+            return MONGO_OK;
         }
     }
 
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-static int processMultiBulkItem(redisReader *r) {
-    redisReadTask *cur = &(r->rstack[r->ridx]);
+static int processMultiBulkItem(mongoReader *r) {
+    mongoReadTask *cur = &(r->rstack[r->ridx]);
     void *obj;
     char *p;
     long elements;
@@ -308,9 +276,9 @@ static int processMultiBulkItem(redisReader *r) {
 
     /* Set error for nested multi bulks with depth > 7 */
     if (r->ridx == 8) {
-        __redisReaderSetError(r,REDIS_ERR_PROTOCOL,
+        __mongoReaderSetError(r,MONGO_ERR_PROTOCOL,
             "No support for nested multi bulk replies with depth > 7");
-        return REDIS_ERR;
+        return MONGO_ERR;
     }
 
     if ((p = readLine(r,NULL)) != NULL) {
@@ -321,11 +289,11 @@ static int processMultiBulkItem(redisReader *r) {
             if (r->fn && r->fn->createNil)
                 obj = r->fn->createNil(cur);
             else
-                obj = (void*)REDIS_REPLY_NIL;
+                obj = (void*)MONGO_REPLY_NIL;
 
             if (obj == NULL) {
-                __redisReaderSetErrorOOM(r);
-                return REDIS_ERR;
+                __mongoReaderSetErrorOOM(r);
+                return MONGO_ERR;
             }
 
             moveToNextTask(r);
@@ -333,11 +301,11 @@ static int processMultiBulkItem(redisReader *r) {
             if (r->fn && r->fn->createArray)
                 obj = r->fn->createArray(cur,elements);
             else
-                obj = (void*)REDIS_REPLY_ARRAY;
+                obj = (void*)MONGO_REPLY_ARRAY;
 
             if (obj == NULL) {
-                __redisReaderSetErrorOOM(r);
-                return REDIS_ERR;
+                __mongoReaderSetErrorOOM(r);
+                return MONGO_ERR;
             }
 
             /* Modify task stack when there are more than 0 elements. */
@@ -358,14 +326,14 @@ static int processMultiBulkItem(redisReader *r) {
 
         /* Set reply if this is the root object. */
         if (root) r->reply = obj;
-        return REDIS_OK;
+        return MONGO_OK;
     }
 
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-static int processItem(redisReader *r) {
-    redisReadTask *cur = &(r->rstack[r->ridx]);
+static int processItem(mongoReader *r) {
+    mongoReadTask *cur = &(r->rstack[r->ridx]);
     char *p;
 
     /* check if we need to read type */
@@ -373,50 +341,50 @@ static int processItem(redisReader *r) {
         if ((p = readBytes(r,1)) != NULL) {
             switch (p[0]) {
             case '-':
-                cur->type = REDIS_REPLY_ERROR;
+                cur->type = MONGO_REPLY_ERROR;
                 break;
             case '+':
-                cur->type = REDIS_REPLY_STATUS;
+                cur->type = MONGO_REPLY_STATUS;
                 break;
             case ':':
-                cur->type = REDIS_REPLY_INTEGER;
+                cur->type = MONGO_REPLY_INTEGER;
                 break;
             case '$':
-                cur->type = REDIS_REPLY_STRING;
+                cur->type = MONGO_REPLY_STRING;
                 break;
             case '*':
-                cur->type = REDIS_REPLY_ARRAY;
+                cur->type = MONGO_REPLY_ARRAY;
                 break;
             default:
-                __redisReaderSetErrorProtocolByte(r,*p);
-                return REDIS_ERR;
+                __mongoReaderSetErrorProtocolByte(r,*p);
+                return MONGO_ERR;
             }
         } else {
             /* could not consume 1 byte */
-            return REDIS_ERR;
+            return MONGO_ERR;
         }
     }
 
     /* process typed item */
     switch(cur->type) {
-    case REDIS_REPLY_ERROR:
-    case REDIS_REPLY_STATUS:
-    case REDIS_REPLY_INTEGER:
+    case MONGO_REPLY_ERROR:
+    case MONGO_REPLY_STATUS:
+    case MONGO_REPLY_INTEGER:
         return processLineItem(r);
-    case REDIS_REPLY_STRING:
+    case MONGO_REPLY_STRING:
         return processBulkItem(r);
-    case REDIS_REPLY_ARRAY:
+    case MONGO_REPLY_ARRAY:
         return processMultiBulkItem(r);
     default:
         assert(NULL);
-        return REDIS_ERR; /* Avoid warning. */
+        return MONGO_ERR; /* Avoid warning. */
     }
 }
 
-redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
-    redisReader *r;
+mongoReader *mongoReaderCreateWithFunctions(mongoReplyObjectFunctions *fn) {
+    mongoReader *r;
 
-    r = calloc(sizeof(redisReader),1);
+    r = calloc(sizeof(mongoReader),1);
     if (r == NULL)
         return NULL;
 
@@ -424,7 +392,7 @@ redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
     r->errstr[0] = '\0';
     r->fn = fn;
     r->buf = sdsempty();
-    r->maxbuf = REDIS_READER_MAX_BUF;
+    r->maxbuf = MONGO_READER_MAX_BUF;
     if (r->buf == NULL) {
         free(r);
         return NULL;
@@ -434,7 +402,7 @@ redisReader *redisReaderCreateWithFunctions(redisReplyObjectFunctions *fn) {
     return r;
 }
 
-void redisReaderFree(redisReader *r) {
+void mongoReaderFree(mongoReader *r) {
     if (r->reply != NULL && r->fn && r->fn->freeObject)
         r->fn->freeObject(r->reply);
     if (r->buf != NULL)
@@ -442,12 +410,12 @@ void redisReaderFree(redisReader *r) {
     free(r);
 }
 
-int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
+int mongoReaderFeed(mongoReader *r, const char *buf, size_t len) {
     sds newbuf;
 
     /* Return early when this reader is in an erroneous state. */
     if (r->err)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* Copy the provided buffer. */
     if (buf != NULL && len >= 1) {
@@ -463,29 +431,29 @@ int redisReaderFeed(redisReader *r, const char *buf, size_t len) {
 
         newbuf = sdscatlen(r->buf,buf,len);
         if (newbuf == NULL) {
-            __redisReaderSetErrorOOM(r);
-            return REDIS_ERR;
+            __mongoReaderSetErrorOOM(r);
+            return MONGO_ERR;
         }
 
         r->buf = newbuf;
         r->len = sdslen(r->buf);
     }
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-int redisReaderGetReply(redisReader *r, void **reply) {
+int mongoReaderGetReply(mongoReader *r, void **reply) {
     /* Default target pointer to NULL. */
     if (reply != NULL)
         *reply = NULL;
 
     /* Return early when this reader is in an erroneous state. */
     if (r->err)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* When the buffer is empty, there will never be a reply. */
     if (r->len == 0)
-        return REDIS_OK;
+        return MONGO_OK;
 
     /* Set first item to process when the stack is empty. */
     if (r->ridx == -1) {
@@ -500,12 +468,12 @@ int redisReaderGetReply(redisReader *r, void **reply) {
 
     /* Process items in reply. */
     while (r->ridx >= 0)
-        if (processItem(r) != REDIS_OK)
+        if (processItem(r) != MONGO_OK)
             break;
 
     /* Return ASAP when an error occurred. */
     if (r->err)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* Discard part of the buffer when we've consumed at least 1k, to avoid
      * doing unnecessary calls to memmove() in sds.c. */
@@ -521,5 +489,5 @@ int redisReaderGetReply(redisReader *r, void **reply) {
             *reply = r->reply;
         r->reply = NULL;
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }

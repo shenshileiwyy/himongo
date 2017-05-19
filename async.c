@@ -1,34 +1,3 @@
-/*
- * Copyright (c) 2009-2011, Salvatore Sanfilippo <antirez at gmail dot com>
- * Copyright (c) 2010-2011, Pieter Noordhuis <pcnoordhuis at gmail dot com>
- *
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *   * Redistributions of source code must retain the above copyright notice,
- *     this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution.
- *   * Neither the name of Redis nor the names of its contributors may be used
- *     to endorse or promote products derived from this software without
- *     specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
 #include "fmacros.h"
 #include <stdlib.h>
 #include <string.h>
@@ -57,8 +26,8 @@
         if ((ctx)->ev.cleanup) (ctx)->ev.cleanup((ctx)->ev.data); \
     } while(0);
 
-/* Forward declaration of function in hiredis.c */
-int __redisAppendCommand(redisContext *c, const char *cmd, size_t len);
+/* Forward declaration of function in himongo.c */
+int __mongoAppendCommand(mongoContext *c, const char *cmd, size_t len);
 
 /* Functions managing dictionary of callbacks for pub/sub. */
 static unsigned int callbackHash(const void *key) {
@@ -68,7 +37,7 @@ static unsigned int callbackHash(const void *key) {
 
 static void *callbackValDup(void *privdata, const void *src) {
     ((void) privdata);
-    redisCallback *dup = malloc(sizeof(*dup));
+    mongoCallback *dup = malloc(sizeof(*dup));
     memcpy(dup,src,sizeof(*dup));
     return dup;
 }
@@ -102,19 +71,19 @@ static dictType callbackDict = {
     callbackValDestructor
 };
 
-static redisAsyncContext *redisAsyncInitialize(redisContext *c) {
-    redisAsyncContext *ac;
+static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
+    mongoAsyncContext *ac;
 
-    ac = realloc(c,sizeof(redisAsyncContext));
+    ac = realloc(c,sizeof(mongoAsyncContext));
     if (ac == NULL)
         return NULL;
 
     c = &(ac->c);
 
-    /* The regular connect functions will always set the flag REDIS_CONNECTED.
+    /* The regular connect functions will always set the flag MONGO_CONNECTED.
      * For the async API, we want to wait until the first write event is
      * received up before setting this flag, so reset it here. */
-    c->flags &= ~REDIS_CONNECTED;
+    c->flags &= ~MONGO_CONNECTED;
 
     ac->err = 0;
     ac->errstr = NULL;
@@ -140,69 +109,69 @@ static redisAsyncContext *redisAsyncInitialize(redisContext *c) {
 }
 
 /* We want the error field to be accessible directly instead of requiring
- * an indirection to the redisContext struct. */
-static void __redisAsyncCopyError(redisAsyncContext *ac) {
+ * an indirection to the mongoContext struct. */
+static void __mongoAsyncCopyError(mongoAsyncContext *ac) {
     if (!ac)
         return;
 
-    redisContext *c = &(ac->c);
+    mongoContext *c = &(ac->c);
     ac->err = c->err;
     ac->errstr = c->errstr;
 }
 
-redisAsyncContext *redisAsyncConnect(const char *ip, int port) {
-    redisContext *c;
-    redisAsyncContext *ac;
+mongoAsyncContext *mongoAsyncConnect(const char *ip, int port) {
+    mongoContext *c;
+    mongoAsyncContext *ac;
 
-    c = redisConnectNonBlock(ip,port);
+    c = mongoConnectNonBlock(ip,port);
     if (c == NULL)
         return NULL;
 
-    ac = redisAsyncInitialize(c);
+    ac = mongoAsyncInitialize(c);
     if (ac == NULL) {
-        redisFree(c);
+        mongoFree(c);
         return NULL;
     }
 
-    __redisAsyncCopyError(ac);
+    __mongoAsyncCopyError(ac);
     return ac;
 }
 
-redisAsyncContext *redisAsyncConnectBind(const char *ip, int port,
+mongoAsyncContext *mongoAsyncConnectBind(const char *ip, int port,
                                          const char *source_addr) {
-    redisContext *c = redisConnectBindNonBlock(ip,port,source_addr);
-    redisAsyncContext *ac = redisAsyncInitialize(c);
-    __redisAsyncCopyError(ac);
+    mongoContext *c = mongoConnectBindNonBlock(ip,port,source_addr);
+    mongoAsyncContext *ac = mongoAsyncInitialize(c);
+    __mongoAsyncCopyError(ac);
     return ac;
 }
 
-redisAsyncContext *redisAsyncConnectBindWithReuse(const char *ip, int port,
+mongoAsyncContext *mongoAsyncConnectBindWithReuse(const char *ip, int port,
                                                   const char *source_addr) {
-    redisContext *c = redisConnectBindNonBlockWithReuse(ip,port,source_addr);
-    redisAsyncContext *ac = redisAsyncInitialize(c);
-    __redisAsyncCopyError(ac);
+    mongoContext *c = mongoConnectBindNonBlockWithReuse(ip,port,source_addr);
+    mongoAsyncContext *ac = mongoAsyncInitialize(c);
+    __mongoAsyncCopyError(ac);
     return ac;
 }
 
-redisAsyncContext *redisAsyncConnectUnix(const char *path) {
-    redisContext *c;
-    redisAsyncContext *ac;
+mongoAsyncContext *mongoAsyncConnectUnix(const char *path) {
+    mongoContext *c;
+    mongoAsyncContext *ac;
 
-    c = redisConnectUnixNonBlock(path);
+    c = mongoConnectUnixNonBlock(path);
     if (c == NULL)
         return NULL;
 
-    ac = redisAsyncInitialize(c);
+    ac = mongoAsyncInitialize(c);
     if (ac == NULL) {
-        redisFree(c);
+        mongoFree(c);
         return NULL;
     }
 
-    __redisAsyncCopyError(ac);
+    __mongoAsyncCopyError(ac);
     return ac;
 }
 
-int redisAsyncSetConnectCallback(redisAsyncContext *ac, redisConnectCallback *fn) {
+int mongoAsyncSetConnectCallback(mongoAsyncContext *ac, mongoConnectCallback *fn) {
     if (ac->onConnect == NULL) {
         ac->onConnect = fn;
 
@@ -210,27 +179,27 @@ int redisAsyncSetConnectCallback(redisAsyncContext *ac, redisConnectCallback *fn
          * the first write event to be fired. This assumes the related event
          * library functions are already set. */
         _EL_ADD_WRITE(ac);
-        return REDIS_OK;
+        return MONGO_OK;
     }
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-int redisAsyncSetDisconnectCallback(redisAsyncContext *ac, redisDisconnectCallback *fn) {
+int mongoAsyncSetDisconnectCallback(mongoAsyncContext *ac, mongoDisconnectCallback *fn) {
     if (ac->onDisconnect == NULL) {
         ac->onDisconnect = fn;
-        return REDIS_OK;
+        return MONGO_OK;
     }
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
 /* Helper functions to push/shift callbacks */
-static int __redisPushCallback(redisCallbackList *list, redisCallback *source) {
-    redisCallback *cb;
+static int __mongoPushCallback(mongoCallbackList *list, mongoCallback *source) {
+    mongoCallback *cb;
 
     /* Copy callback from stack to heap */
     cb = malloc(sizeof(*cb));
     if (cb == NULL)
-        return REDIS_ERR_OOM;
+        return MONGO_ERR_OOM;
 
     if (source != NULL) {
         memcpy(cb,source,sizeof(*cb));
@@ -243,11 +212,11 @@ static int __redisPushCallback(redisCallbackList *list, redisCallback *source) {
     if (list->tail != NULL)
         list->tail->next = cb;
     list->tail = cb;
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int __redisShiftCallback(redisCallbackList *list, redisCallback *target) {
-    redisCallback *cb = list->head;
+static int __mongoShiftCallback(mongoCallbackList *list, mongoCallback *target) {
+    mongoCallback *cb = list->head;
     if (cb != NULL) {
         list->head = cb->next;
         if (cb == list->tail)
@@ -257,112 +226,112 @@ static int __redisShiftCallback(redisCallbackList *list, redisCallback *target) 
         if (target != NULL)
             memcpy(target,cb,sizeof(*cb));
         free(cb);
-        return REDIS_OK;
+        return MONGO_OK;
     }
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-static void __redisRunCallback(redisAsyncContext *ac, redisCallback *cb, redisReply *reply) {
-    redisContext *c = &(ac->c);
+static void __mongoRunCallback(mongoAsyncContext *ac, mongoCallback *cb, mongoReply *reply) {
+    mongoContext *c = &(ac->c);
     if (cb->fn != NULL) {
-        c->flags |= REDIS_IN_CALLBACK;
+        c->flags |= MONGO_IN_CALLBACK;
         cb->fn(ac,reply,cb->privdata);
-        c->flags &= ~REDIS_IN_CALLBACK;
+        c->flags &= ~MONGO_IN_CALLBACK;
     }
 }
 
 /* Helper function to free the context. */
-static void __redisAsyncFree(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    redisCallback cb;
+static void __mongoAsyncFree(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    mongoCallback cb;
     dictIterator *it;
     dictEntry *de;
 
     /* Execute pending callbacks with NULL reply. */
-    while (__redisShiftCallback(&ac->replies,&cb) == REDIS_OK)
-        __redisRunCallback(ac,&cb,NULL);
+    while (__mongoShiftCallback(&ac->replies,&cb) == MONGO_OK)
+        __mongoRunCallback(ac,&cb,NULL);
 
     /* Execute callbacks for invalid commands */
-    while (__redisShiftCallback(&ac->sub.invalid,&cb) == REDIS_OK)
-        __redisRunCallback(ac,&cb,NULL);
+    while (__mongoShiftCallback(&ac->sub.invalid,&cb) == MONGO_OK)
+        __mongoRunCallback(ac,&cb,NULL);
 
     /* Run subscription callbacks callbacks with NULL reply */
     it = dictGetIterator(ac->sub.channels);
     while ((de = dictNext(it)) != NULL)
-        __redisRunCallback(ac,dictGetEntryVal(de),NULL);
+        __mongoRunCallback(ac,dictGetEntryVal(de),NULL);
     dictReleaseIterator(it);
     dictRelease(ac->sub.channels);
 
     it = dictGetIterator(ac->sub.patterns);
     while ((de = dictNext(it)) != NULL)
-        __redisRunCallback(ac,dictGetEntryVal(de),NULL);
+        __mongoRunCallback(ac,dictGetEntryVal(de),NULL);
     dictReleaseIterator(it);
     dictRelease(ac->sub.patterns);
 
     /* Signal event lib to clean up */
     _EL_CLEANUP(ac);
 
-    /* Execute disconnect callback. When redisAsyncFree() initiated destroying
-     * this context, the status will always be REDIS_OK. */
-    if (ac->onDisconnect && (c->flags & REDIS_CONNECTED)) {
-        if (c->flags & REDIS_FREEING) {
-            ac->onDisconnect(ac,REDIS_OK);
+    /* Execute disconnect callback. When mongoAsyncFree() initiated destroying
+     * this context, the status will always be MONGO_OK. */
+    if (ac->onDisconnect && (c->flags & MONGO_CONNECTED)) {
+        if (c->flags & MONGO_FREEING) {
+            ac->onDisconnect(ac,MONGO_OK);
         } else {
-            ac->onDisconnect(ac,(ac->err == 0) ? REDIS_OK : REDIS_ERR);
+            ac->onDisconnect(ac,(ac->err == 0) ? MONGO_OK : MONGO_ERR);
         }
     }
 
     /* Cleanup self */
-    redisFree(c);
+    mongoFree(c);
 }
 
 /* Free the async context. When this function is called from a callback,
- * control needs to be returned to redisProcessCallbacks() before actual
+ * control needs to be returned to mongoProcessCallbacks() before actual
  * free'ing. To do so, a flag is set on the context which is picked up by
- * redisProcessCallbacks(). Otherwise, the context is immediately free'd. */
-void redisAsyncFree(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    c->flags |= REDIS_FREEING;
-    if (!(c->flags & REDIS_IN_CALLBACK))
-        __redisAsyncFree(ac);
+ * mongoProcessCallbacks(). Otherwise, the context is immediately free'd. */
+void mongoAsyncFree(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    c->flags |= MONGO_FREEING;
+    if (!(c->flags & MONGO_IN_CALLBACK))
+        __mongoAsyncFree(ac);
 }
 
 /* Helper function to make the disconnect happen and clean up. */
-static void __redisAsyncDisconnect(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
+static void __mongoAsyncDisconnect(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
 
     /* Make sure error is accessible if there is any */
-    __redisAsyncCopyError(ac);
+    __mongoAsyncCopyError(ac);
 
     if (ac->err == 0) {
         /* For clean disconnects, there should be no pending callbacks. */
-        assert(__redisShiftCallback(&ac->replies,NULL) == REDIS_ERR);
+        assert(__mongoShiftCallback(&ac->replies,NULL) == MONGO_ERR);
     } else {
         /* Disconnection is caused by an error, make sure that pending
          * callbacks cannot call new commands. */
-        c->flags |= REDIS_DISCONNECTING;
+        c->flags |= MONGO_DISCONNECTING;
     }
 
-    /* For non-clean disconnects, __redisAsyncFree() will execute pending
+    /* For non-clean disconnects, __mongoAsyncFree() will execute pending
      * callbacks with a NULL-reply. */
-    __redisAsyncFree(ac);
+    __mongoAsyncFree(ac);
 }
 
-/* Tries to do a clean disconnect from Redis, meaning it stops new commands
+/* Tries to do a clean disconnect from Mongo, meaning it stops new commands
  * from being issued, but tries to flush the output buffer and execute
  * callbacks for all remaining replies. When this function is called from a
  * callback, there might be more replies and we can safely defer disconnecting
- * to redisProcessCallbacks(). Otherwise, we can only disconnect immediately
+ * to mongoProcessCallbacks(). Otherwise, we can only disconnect immediately
  * when there are no pending callbacks. */
-void redisAsyncDisconnect(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    c->flags |= REDIS_DISCONNECTING;
-    if (!(c->flags & REDIS_IN_CALLBACK) && ac->replies.head == NULL)
-        __redisAsyncDisconnect(ac);
+void mongoAsyncDisconnect(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    c->flags |= MONGO_DISCONNECTING;
+    if (!(c->flags & MONGO_IN_CALLBACK) && ac->replies.head == NULL)
+        __mongoAsyncDisconnect(ac);
 }
 
-static int __redisGetSubscribeCallback(redisAsyncContext *ac, redisReply *reply, redisCallback *dstcb) {
-    redisContext *c = &(ac->c);
+static int __mongoGetSubscribeCallback(mongoAsyncContext *ac, mongoReply *reply, mongoCallback *dstcb) {
+    mongoContext *c = &(ac->c);
     dict *callbacks;
     dictEntry *de;
     int pvariant;
@@ -371,9 +340,9 @@ static int __redisGetSubscribeCallback(redisAsyncContext *ac, redisReply *reply,
 
     /* Custom reply functions are not supported for pub/sub. This will fail
      * very hard when they are used... */
-    if (reply->type == REDIS_REPLY_ARRAY) {
+    if (reply->type == MONGO_REPLY_ARRAY) {
         assert(reply->elements >= 2);
-        assert(reply->element[0]->type == REDIS_REPLY_STRING);
+        assert(reply->element[0]->type == MONGO_REPLY_STRING);
         stype = reply->element[0]->str;
         pvariant = (tolower(stype[0]) == 'p') ? 1 : 0;
 
@@ -383,7 +352,7 @@ static int __redisGetSubscribeCallback(redisAsyncContext *ac, redisReply *reply,
             callbacks = ac->sub.channels;
 
         /* Locate the right callback */
-        assert(reply->element[1]->type == REDIS_REPLY_STRING);
+        assert(reply->element[1]->type == MONGO_REPLY_STRING);
         sname = sdsnewlen(reply->element[1]->str,reply->element[1]->len);
         de = dictFind(callbacks,sname);
         if (de != NULL) {
@@ -395,38 +364,38 @@ static int __redisGetSubscribeCallback(redisAsyncContext *ac, redisReply *reply,
 
                 /* If this was the last unsubscribe message, revert to
                  * non-subscribe mode. */
-                assert(reply->element[2]->type == REDIS_REPLY_INTEGER);
+                assert(reply->element[2]->type == MONGO_REPLY_INTEGER);
                 if (reply->element[2]->integer == 0)
-                    c->flags &= ~REDIS_SUBSCRIBED;
+                    c->flags &= ~MONGO_SUBSCRIBED;
             }
         }
         sdsfree(sname);
     } else {
         /* Shift callback for invalid commands. */
-        __redisShiftCallback(&ac->sub.invalid,dstcb);
+        __mongoShiftCallback(&ac->sub.invalid,dstcb);
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-void redisProcessCallbacks(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    redisCallback cb = {NULL, NULL, NULL};
+void mongoProcessCallbacks(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    mongoCallback cb = {NULL, NULL, NULL};
     void *reply = NULL;
     int status;
 
-    while((status = redisGetReply(c,&reply)) == REDIS_OK) {
+    while((status = mongoGetReply(c,&reply)) == MONGO_OK) {
         if (reply == NULL) {
             /* When the connection is being disconnected and there are
              * no more replies, this is the cue to really disconnect. */
-            if (c->flags & REDIS_DISCONNECTING && sdslen(c->obuf) == 0
+            if (c->flags & MONGO_DISCONNECTING && sdslen(c->obuf) == 0
                 && ac->replies.head == NULL) {
-                __redisAsyncDisconnect(ac);
+                __mongoAsyncDisconnect(ac);
                 return;
             }
 
             /* If monitor mode, repush callback */
-            if(c->flags & REDIS_MONITORING) {
-                __redisPushCallback(&ac->replies,&cb);
+            if(c->flags & MONGO_MONITORING) {
+                __mongoPushCallback(&ac->replies,&cb);
             }
 
             /* When the connection is not being disconnected, simply stop
@@ -436,7 +405,7 @@ void redisProcessCallbacks(redisAsyncContext *ac) {
 
         /* Even if the context is subscribed, pending regular callbacks will
          * get a reply before pub/sub messages arrive. */
-        if (__redisShiftCallback(&ac->replies,&cb) != REDIS_OK) {
+        if (__mongoShiftCallback(&ac->replies,&cb) != MONGO_OK) {
             /*
              * A spontaneous reply in a not-subscribed context can be the error
              * reply that is sent when a new connection exceeds the maximum
@@ -452,26 +421,26 @@ void redisProcessCallbacks(redisAsyncContext *ac) {
              * In this case we also want to close the connection, and have the
              * user wait until the server is ready to take our request.
              */
-            if (((redisReply*)reply)->type == REDIS_REPLY_ERROR) {
-                c->err = REDIS_ERR_OTHER;
-                snprintf(c->errstr,sizeof(c->errstr),"%s",((redisReply*)reply)->str);
+            if (((mongoReply*)reply)->type == MONGO_REPLY_ERROR) {
+                c->err = MONGO_ERR_OTHER;
+                snprintf(c->errstr,sizeof(c->errstr),"%s",((mongoReply*)reply)->str);
                 c->reader->fn->freeObject(reply);
-                __redisAsyncDisconnect(ac);
+                __mongoAsyncDisconnect(ac);
                 return;
             }
             /* No more regular callbacks and no errors, the context *must* be subscribed or monitoring. */
-            assert((c->flags & REDIS_SUBSCRIBED || c->flags & REDIS_MONITORING));
-            if(c->flags & REDIS_SUBSCRIBED)
-                __redisGetSubscribeCallback(ac,reply,&cb);
+            assert((c->flags & MONGO_SUBSCRIBED || c->flags & MONGO_MONITORING));
+            if(c->flags & MONGO_SUBSCRIBED)
+                __mongoGetSubscribeCallback(ac,reply,&cb);
         }
 
         if (cb.fn != NULL) {
-            __redisRunCallback(ac,&cb,reply);
+            __mongoRunCallback(ac,&cb,reply);
             c->reader->fn->freeObject(reply);
 
-            /* Proceed with free'ing when redisAsyncFree() was called. */
-            if (c->flags & REDIS_FREEING) {
-                __redisAsyncFree(ac);
+            /* Proceed with free'ing when mongoAsyncFree() was called. */
+            if (c->flags & MONGO_FREEING) {
+                __mongoAsyncFree(ac);
                 return;
             }
         } else {
@@ -484,71 +453,71 @@ void redisProcessCallbacks(redisAsyncContext *ac) {
     }
 
     /* Disconnect when there was an error reading the reply */
-    if (status != REDIS_OK)
-        __redisAsyncDisconnect(ac);
+    if (status != MONGO_OK)
+        __mongoAsyncDisconnect(ac);
 }
 
 /* Internal helper function to detect socket status the first time a read or
  * write event fires. When connecting was not successful, the connect callback
- * is called with a REDIS_ERR status and the context is free'd. */
-static int __redisAsyncHandleConnect(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
+ * is called with a MONGO_ERR status and the context is free'd. */
+static int __mongoAsyncHandleConnect(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
 
-    if (redisCheckSocketError(c) == REDIS_ERR) {
+    if (mongoCheckSocketError(c) == MONGO_ERR) {
         /* Try again later when connect(2) is still in progress. */
         if (errno == EINPROGRESS)
-            return REDIS_OK;
+            return MONGO_OK;
 
-        if (ac->onConnect) ac->onConnect(ac,REDIS_ERR);
-        __redisAsyncDisconnect(ac);
-        return REDIS_ERR;
+        if (ac->onConnect) ac->onConnect(ac,MONGO_ERR);
+        __mongoAsyncDisconnect(ac);
+        return MONGO_ERR;
     }
 
     /* Mark context as connected. */
-    c->flags |= REDIS_CONNECTED;
-    if (ac->onConnect) ac->onConnect(ac,REDIS_OK);
-    return REDIS_OK;
+    c->flags |= MONGO_CONNECTED;
+    if (ac->onConnect) ac->onConnect(ac,MONGO_OK);
+    return MONGO_OK;
 }
 
 /* This function should be called when the socket is readable.
  * It processes all replies that can be read and executes their callbacks.
  */
-void redisAsyncHandleRead(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
+void mongoAsyncHandleRead(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
 
-    if (!(c->flags & REDIS_CONNECTED)) {
+    if (!(c->flags & MONGO_CONNECTED)) {
         /* Abort connect was not successful. */
-        if (__redisAsyncHandleConnect(ac) != REDIS_OK)
+        if (__mongoAsyncHandleConnect(ac) != MONGO_OK)
             return;
         /* Try again later when the context is still not connected. */
-        if (!(c->flags & REDIS_CONNECTED))
+        if (!(c->flags & MONGO_CONNECTED))
             return;
     }
 
-    if (redisBufferRead(c) == REDIS_ERR) {
-        __redisAsyncDisconnect(ac);
+    if (mongoBufferRead(c) == MONGO_ERR) {
+        __mongoAsyncDisconnect(ac);
     } else {
         /* Always re-schedule reads */
         _EL_ADD_READ(ac);
-        redisProcessCallbacks(ac);
+        mongoProcessCallbacks(ac);
     }
 }
 
-void redisAsyncHandleWrite(redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
+void mongoAsyncHandleWrite(mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
     int done = 0;
 
-    if (!(c->flags & REDIS_CONNECTED)) {
+    if (!(c->flags & MONGO_CONNECTED)) {
         /* Abort connect was not successful. */
-        if (__redisAsyncHandleConnect(ac) != REDIS_OK)
+        if (__mongoAsyncHandleConnect(ac) != MONGO_OK)
             return;
         /* Try again later when the context is still not connected. */
-        if (!(c->flags & REDIS_CONNECTED))
+        if (!(c->flags & MONGO_CONNECTED))
             return;
     }
 
-    if (redisBufferWrite(c,&done) == REDIS_ERR) {
-        __redisAsyncDisconnect(ac);
+    if (mongoBufferWrite(c,&done) == MONGO_ERR) {
+        __mongoAsyncDisconnect(ac);
     } else {
         /* Continue writing when not done, stop writing otherwise */
         if (!done)
@@ -577,12 +546,12 @@ static const char *nextArgument(const char *start, const char **str, size_t *len
     return p+2+(*len)+2;
 }
 
-/* Helper function for the redisAsyncCommand* family of functions. Writes a
+/* Helper function for the mongoAsyncCommand* family of functions. Writes a
  * formatted command to the output buffer and registers the provided callback
  * function with the context. */
-static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
-    redisContext *c = &(ac->c);
-    redisCallback cb;
+static int __mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
+    mongoContext *c = &(ac->c);
+    mongoCallback cb;
     int pvariant, hasnext;
     const char *cstr, *astr;
     size_t clen, alen;
@@ -591,7 +560,7 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     int ret;
 
     /* Don't accept new commands when the connection is about to be closed. */
-    if (c->flags & (REDIS_DISCONNECTING | REDIS_FREEING)) return REDIS_ERR;
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
 
     /* Setup callback */
     cb.fn = fn;
@@ -606,7 +575,7 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     clen -= pvariant;
 
     if (hasnext && strncasecmp(cstr,"subscribe\r\n",11) == 0) {
-        c->flags |= REDIS_SUBSCRIBED;
+        c->flags |= MONGO_SUBSCRIBED;
 
         /* Add every channel/pattern to the list of subscription callbacks. */
         while ((p = nextArgument(p,&astr,&alen)) != NULL) {
@@ -621,67 +590,67 @@ static int __redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void 
     } else if (strncasecmp(cstr,"unsubscribe\r\n",13) == 0) {
         /* It is only useful to call (P)UNSUBSCRIBE when the context is
          * subscribed to one or more channels or patterns. */
-        if (!(c->flags & REDIS_SUBSCRIBED)) return REDIS_ERR;
+        if (!(c->flags & MONGO_SUBSCRIBED)) return MONGO_ERR;
 
         /* (P)UNSUBSCRIBE does not have its own response: every channel or
          * pattern that is unsubscribed will receive a message. This means we
          * should not append a callback function for this command. */
      } else if(strncasecmp(cstr,"monitor\r\n",9) == 0) {
          /* Set monitor flag and push callback */
-         c->flags |= REDIS_MONITORING;
-         __redisPushCallback(&ac->replies,&cb);
+         c->flags |= MONGO_MONITORING;
+         __mongoPushCallback(&ac->replies,&cb);
     } else {
-        if (c->flags & REDIS_SUBSCRIBED)
+        if (c->flags & MONGO_SUBSCRIBED)
             /* This will likely result in an error reply, but it needs to be
              * received and passed to the callback. */
-            __redisPushCallback(&ac->sub.invalid,&cb);
+            __mongoPushCallback(&ac->sub.invalid,&cb);
         else
-            __redisPushCallback(&ac->replies,&cb);
+            __mongoPushCallback(&ac->replies,&cb);
     }
 
-    __redisAppendCommand(c,cmd,len);
+    __mongoAppendCommand(c,cmd,len);
 
     /* Always schedule a write when the write buffer is non-empty */
     _EL_ADD_WRITE(ac);
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-int redisvAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, const char *format, va_list ap) {
+int mongovAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, va_list ap) {
     char *cmd;
     int len;
     int status;
-    len = redisvFormatCommand(&cmd,format,ap);
+    len = mongovFormatCommand(&cmd,format,ap);
 
     /* We don't want to pass -1 or -2 to future functions as a length. */
     if (len < 0)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
-    status = __redisAsyncCommand(ac,fn,privdata,cmd,len);
+    status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
     free(cmd);
     return status;
 }
 
-int redisAsyncCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, const char *format, ...) {
+int mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, ...) {
     va_list ap;
     int status;
     va_start(ap,format);
-    status = redisvAsyncCommand(ac,fn,privdata,format,ap);
+    status = mongovAsyncCommand(ac,fn,privdata,format,ap);
     va_end(ap);
     return status;
 }
 
-int redisAsyncCommandArgv(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, int argc, const char **argv, const size_t *argvlen) {
+int mongoAsyncCommandArgv(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, int argc, const char **argv, const size_t *argvlen) {
     sds cmd;
     int len;
     int status;
-    len = redisFormatSdsCommandArgv(&cmd,argc,argv,argvlen);
-    status = __redisAsyncCommand(ac,fn,privdata,cmd,len);
+    len = mongoFormatSdsCommandArgv(&cmd,argc,argv,argvlen);
+    status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
     sdsfree(cmd);
     return status;
 }
 
-int redisAsyncFormattedCommand(redisAsyncContext *ac, redisCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
-    int status = __redisAsyncCommand(ac,fn,privdata,cmd,len);
+int mongoAsyncFormattedCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
+    int status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
     return status;
 }

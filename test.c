@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <limits.h>
 
-#include "hiredis.h"
+#include "himongo.h"
 #include "net.h"
 
 enum connection_type {
@@ -51,18 +51,18 @@ static long long usec(void) {
 #define assert(e) (void)(e)
 #endif
 
-static redisContext *select_database(redisContext *c) {
-    redisReply *reply;
+static mongoContext *select_database(mongoContext *c) {
+    mongoReply *reply;
 
     /* Switch to DB 9 for testing, now that we know we can chat. */
-    reply = redisCommand(c,"SELECT 9");
+    reply = mongoCommand(c,"SELECT 9");
     assert(reply != NULL);
     freeReplyObject(reply);
 
     /* Make sure the DB is emtpy */
-    reply = redisCommand(c,"DBSIZE");
+    reply = mongoCommand(c,"DBSIZE");
     assert(reply != NULL);
-    if (reply->type == REDIS_REPLY_INTEGER && reply->integer == 0) {
+    if (reply->type == MONGO_REPLY_INTEGER && reply->integer == 0) {
         /* Awesome, DB 9 is empty and we can continue. */
         freeReplyObject(reply);
     } else {
@@ -73,49 +73,49 @@ static redisContext *select_database(redisContext *c) {
     return c;
 }
 
-static int disconnect(redisContext *c, int keep_fd) {
-    redisReply *reply;
+static int disconnect(mongoContext *c, int keep_fd) {
+    mongoReply *reply;
 
     /* Make sure we're on DB 9. */
-    reply = redisCommand(c,"SELECT 9");
+    reply = mongoCommand(c,"SELECT 9");
     assert(reply != NULL);
     freeReplyObject(reply);
-    reply = redisCommand(c,"FLUSHDB");
+    reply = mongoCommand(c,"FLUSHDB");
     assert(reply != NULL);
     freeReplyObject(reply);
 
     /* Free the context as well, but keep the fd if requested. */
     if (keep_fd)
-        return redisFreeKeepFd(c);
-    redisFree(c);
+        return mongoFreeKeepFd(c);
+    mongoFree(c);
     return -1;
 }
 
-static redisContext *connect(struct config config) {
-    redisContext *c = NULL;
+static mongoContext *connect(struct config config) {
+    mongoContext *c = NULL;
 
     if (config.type == CONN_TCP) {
-        c = redisConnect(config.tcp.host, config.tcp.port);
+        c = mongoConnect(config.tcp.host, config.tcp.port);
     } else if (config.type == CONN_UNIX) {
-        c = redisConnectUnix(config.unix_sock.path);
+        c = mongoConnectUnix(config.unix_sock.path);
     } else if (config.type == CONN_FD) {
         /* Create a dummy connection just to get an fd to inherit */
-        redisContext *dummy_ctx = redisConnectUnix(config.unix_sock.path);
+        mongoContext *dummy_ctx = mongoConnectUnix(config.unix_sock.path);
         if (dummy_ctx) {
             int fd = disconnect(dummy_ctx, 1);
             printf("Connecting to inherited fd %d\n", fd);
-            c = redisConnectFd(fd);
+            c = mongoConnectFd(fd);
         }
     } else {
         assert(NULL);
     }
 
     if (c == NULL) {
-        printf("Connection error: can't allocate redis context\n");
+        printf("Connection error: can't allocate mongo context\n");
         exit(1);
     } else if (c->err) {
         printf("Connection error: %s\n", c->errstr);
-        redisFree(c);
+        mongoFree(c);
         exit(1);
     }
 
@@ -127,43 +127,43 @@ static void test_format_commands(void) {
     int len;
 
     test("Format command without interpolation: ");
-    len = redisFormatCommand(&cmd,"SET foo bar");
+    len = mongoFormatCommand(&cmd,"SET foo bar");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%s string interpolation: ");
-    len = redisFormatCommand(&cmd,"SET %s %s","foo","bar");
+    len = mongoFormatCommand(&cmd,"SET %s %s","foo","bar");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%s and an empty string: ");
-    len = redisFormatCommand(&cmd,"SET %s %s","foo","");
+    len = mongoFormatCommand(&cmd,"SET %s %s","foo","");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$0\r\n\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(0+2));
     free(cmd);
 
     test("Format command with an empty string in between proper interpolations: ");
-    len = redisFormatCommand(&cmd,"SET %s %s","","foo");
+    len = mongoFormatCommand(&cmd,"SET %s %s","","foo");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$0\r\n\r\n$3\r\nfoo\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(0+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%b string interpolation: ");
-    len = redisFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"b\0r",(size_t)3);
+    len = mongoFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"b\0r",(size_t)3);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nb\0r\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%b and an empty string: ");
-    len = redisFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"",(size_t)0);
+    len = mongoFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"",(size_t)0);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$0\r\n\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(0+2));
     free(cmd);
 
     test("Format command with literal %%: ");
-    len = redisFormatCommand(&cmd,"SET %% %%");
+    len = mongoFormatCommand(&cmd,"SET %% %%");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$1\r\n%\r\n$1\r\n%\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(1+2)+4+(1+2));
     free(cmd);
@@ -174,7 +174,7 @@ static void test_format_commands(void) {
 #define INTEGER_WIDTH_TEST(fmt, type) do {                                                \
     type value = 123;                                                                     \
     test("Format command with printf-delegation (" #type "): ");                          \
-    len = redisFormatCommand(&cmd,"key:%08" fmt " str:%s", value, "hello");               \
+    len = mongoFormatCommand(&cmd,"key:%08" fmt " str:%s", value, "hello");               \
     test_cond(strncmp(cmd,"*2\r\n$12\r\nkey:00000123\r\n$9\r\nstr:hello\r\n",len) == 0 && \
         len == 4+5+(12+2)+4+(9+2));                                                       \
     free(cmd);                                                                            \
@@ -183,7 +183,7 @@ static void test_format_commands(void) {
 #define FLOAT_WIDTH_TEST(type) do {                                                       \
     type value = 123.0;                                                                   \
     test("Format command with printf-delegation (" #type "): ");                          \
-    len = redisFormatCommand(&cmd,"key:%08.3f str:%s", value, "hello");                   \
+    len = mongoFormatCommand(&cmd,"key:%08.3f str:%s", value, "hello");                   \
     test_cond(strncmp(cmd,"*2\r\n$12\r\nkey:0123.000\r\n$9\r\nstr:hello\r\n",len) == 0 && \
         len == 4+5+(12+2)+4+(9+2));                                                       \
     free(cmd);                                                                            \
@@ -203,7 +203,7 @@ static void test_format_commands(void) {
     FLOAT_WIDTH_TEST(double);
 
     test("Format command with invalid printf format: ");
-    len = redisFormatCommand(&cmd,"key:%08p %b",(void*)1234,"foo",(size_t)3);
+    len = mongoFormatCommand(&cmd,"key:%08p %b",(void*)1234,"foo",(size_t)3);
     test_cond(len == -1);
 
     const char *argv[3];
@@ -214,13 +214,13 @@ static void test_format_commands(void) {
     int argc = 3;
 
     test("Format command by passing argc/argv without lengths: ");
-    len = redisFormatCommandArgv(&cmd,argc,argv,NULL);
+    len = mongoFormatCommandArgv(&cmd,argc,argv,NULL);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command by passing argc/argv with lengths: ");
-    len = redisFormatCommandArgv(&cmd,argc,argv,lens);
+    len = mongoFormatCommandArgv(&cmd,argc,argv,lens);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$7\r\nfoo\0xxx\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(7+2)+4+(3+2));
     free(cmd);
@@ -229,22 +229,22 @@ static void test_format_commands(void) {
 
     sds_cmd = sdsempty();
     test("Format command into sds by passing argc/argv without lengths: ");
-    len = redisFormatSdsCommandArgv(&sds_cmd,argc,argv,NULL);
+    len = mongoFormatSdsCommandArgv(&sds_cmd,argc,argv,NULL);
     test_cond(strncmp(sds_cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     sdsfree(sds_cmd);
 
     sds_cmd = sdsempty();
     test("Format command into sds by passing argc/argv with lengths: ");
-    len = redisFormatSdsCommandArgv(&sds_cmd,argc,argv,lens);
+    len = mongoFormatSdsCommandArgv(&sds_cmd,argc,argv,lens);
     test_cond(strncmp(sds_cmd,"*3\r\n$3\r\nSET\r\n$7\r\nfoo\0xxx\r\n$3\r\nbar\r\n",len) == 0 &&
         len == 4+4+(3+2)+4+(7+2)+4+(3+2));
     sdsfree(sds_cmd);
 }
 
 static void test_append_formatted_commands(struct config config) {
-    redisContext *c;
-    redisReply *reply;
+    mongoContext *c;
+    mongoReply *reply;
     char *cmd;
     int len;
 
@@ -252,11 +252,11 @@ static void test_append_formatted_commands(struct config config) {
 
     test("Append format command: ");
 
-    len = redisFormatCommand(&cmd, "SET foo bar");
+    len = mongoFormatCommand(&cmd, "SET foo bar");
 
-    test_cond(redisAppendFormattedCommand(c, cmd, len) == REDIS_OK);
+    test_cond(mongoAppendFormattedCommand(c, cmd, len) == MONGO_OK);
 
-    assert(redisGetReply(c, (void*)&reply) == REDIS_OK);
+    assert(mongoGetReply(c, (void*)&reply) == MONGO_OK);
 
     free(cmd);
     freeReplyObject(reply);
@@ -265,91 +265,91 @@ static void test_append_formatted_commands(struct config config) {
 }
 
 static void test_reply_reader(void) {
-    redisReader *reader;
+    mongoReader *reader;
     void *reply;
     int ret;
     int i;
 
     test("Error handling in reply parser: ");
-    reader = redisReaderCreate();
-    redisReaderFeed(reader,(char*)"@foo\r\n",6);
-    ret = redisReaderGetReply(reader,NULL);
-    test_cond(ret == REDIS_ERR &&
+    reader = mongoReaderCreate();
+    mongoReaderFeed(reader,(char*)"@foo\r\n",6);
+    ret = mongoReaderGetReply(reader,NULL);
+    test_cond(ret == MONGO_ERR &&
               strcasecmp(reader->errstr,"Protocol error, got \"@\" as reply type byte") == 0);
-    redisReaderFree(reader);
+    mongoReaderFree(reader);
 
     /* when the reply already contains multiple items, they must be free'd
      * on an error. valgrind will bark when this doesn't happen. */
     test("Memory cleanup in reply parser: ");
-    reader = redisReaderCreate();
-    redisReaderFeed(reader,(char*)"*2\r\n",4);
-    redisReaderFeed(reader,(char*)"$5\r\nhello\r\n",11);
-    redisReaderFeed(reader,(char*)"@foo\r\n",6);
-    ret = redisReaderGetReply(reader,NULL);
-    test_cond(ret == REDIS_ERR &&
+    reader = mongoReaderCreate();
+    mongoReaderFeed(reader,(char*)"*2\r\n",4);
+    mongoReaderFeed(reader,(char*)"$5\r\nhello\r\n",11);
+    mongoReaderFeed(reader,(char*)"@foo\r\n",6);
+    ret = mongoReaderGetReply(reader,NULL);
+    test_cond(ret == MONGO_ERR &&
               strcasecmp(reader->errstr,"Protocol error, got \"@\" as reply type byte") == 0);
-    redisReaderFree(reader);
+    mongoReaderFree(reader);
 
     test("Set error on nested multi bulks with depth > 7: ");
-    reader = redisReaderCreate();
+    reader = mongoReaderCreate();
 
     for (i = 0; i < 9; i++) {
-        redisReaderFeed(reader,(char*)"*1\r\n",4);
+        mongoReaderFeed(reader,(char*)"*1\r\n",4);
     }
 
-    ret = redisReaderGetReply(reader,NULL);
-    test_cond(ret == REDIS_ERR &&
+    ret = mongoReaderGetReply(reader,NULL);
+    test_cond(ret == MONGO_ERR &&
               strncasecmp(reader->errstr,"No support for",14) == 0);
-    redisReaderFree(reader);
+    mongoReaderFree(reader);
 
     test("Works with NULL functions for reply: ");
-    reader = redisReaderCreate();
+    reader = mongoReaderCreate();
     reader->fn = NULL;
-    redisReaderFeed(reader,(char*)"+OK\r\n",5);
-    ret = redisReaderGetReply(reader,&reply);
-    test_cond(ret == REDIS_OK && reply == (void*)REDIS_REPLY_STATUS);
-    redisReaderFree(reader);
+    mongoReaderFeed(reader,(char*)"+OK\r\n",5);
+    ret = mongoReaderGetReply(reader,&reply);
+    test_cond(ret == MONGO_OK && reply == (void*)MONGO_REPLY_STATUS);
+    mongoReaderFree(reader);
 
     test("Works when a single newline (\\r\\n) covers two calls to feed: ");
-    reader = redisReaderCreate();
+    reader = mongoReaderCreate();
     reader->fn = NULL;
-    redisReaderFeed(reader,(char*)"+OK\r",4);
-    ret = redisReaderGetReply(reader,&reply);
-    assert(ret == REDIS_OK && reply == NULL);
-    redisReaderFeed(reader,(char*)"\n",1);
-    ret = redisReaderGetReply(reader,&reply);
-    test_cond(ret == REDIS_OK && reply == (void*)REDIS_REPLY_STATUS);
-    redisReaderFree(reader);
+    mongoReaderFeed(reader,(char*)"+OK\r",4);
+    ret = mongoReaderGetReply(reader,&reply);
+    assert(ret == MONGO_OK && reply == NULL);
+    mongoReaderFeed(reader,(char*)"\n",1);
+    ret = mongoReaderGetReply(reader,&reply);
+    test_cond(ret == MONGO_OK && reply == (void*)MONGO_REPLY_STATUS);
+    mongoReaderFree(reader);
 
     test("Don't reset state after protocol error: ");
-    reader = redisReaderCreate();
+    reader = mongoReaderCreate();
     reader->fn = NULL;
-    redisReaderFeed(reader,(char*)"x",1);
-    ret = redisReaderGetReply(reader,&reply);
-    assert(ret == REDIS_ERR);
-    ret = redisReaderGetReply(reader,&reply);
-    test_cond(ret == REDIS_ERR && reply == NULL);
-    redisReaderFree(reader);
+    mongoReaderFeed(reader,(char*)"x",1);
+    ret = mongoReaderGetReply(reader,&reply);
+    assert(ret == MONGO_ERR);
+    ret = mongoReaderGetReply(reader,&reply);
+    test_cond(ret == MONGO_ERR && reply == NULL);
+    mongoReaderFree(reader);
 
     /* Regression test for issue #45 on GitHub. */
     test("Don't do empty allocation for empty multi bulk: ");
-    reader = redisReaderCreate();
-    redisReaderFeed(reader,(char*)"*0\r\n",4);
-    ret = redisReaderGetReply(reader,&reply);
-    test_cond(ret == REDIS_OK &&
-        ((redisReply*)reply)->type == REDIS_REPLY_ARRAY &&
-        ((redisReply*)reply)->elements == 0);
+    reader = mongoReaderCreate();
+    mongoReaderFeed(reader,(char*)"*0\r\n",4);
+    ret = mongoReaderGetReply(reader,&reply);
+    test_cond(ret == MONGO_OK &&
+        ((mongoReply*)reply)->type == MONGO_REPLY_ARRAY &&
+        ((mongoReply*)reply)->elements == 0);
     freeReplyObject(reply);
-    redisReaderFree(reader);
+    mongoReaderFree(reader);
 }
 
 static void test_free_null(void) {
-    void *redisCtx = NULL;
+    void *mongoCtx = NULL;
     void *reply = NULL;
 
-    test("Don't fail when redisFree is passed a NULL value: ");
-    redisFree(redisCtx);
-    test_cond(redisCtx == NULL);
+    test("Don't fail when mongoFree is passed a NULL value: ");
+    mongoFree(mongoCtx);
+    test_cond(mongoCtx == NULL);
 
     test("Don't fail when freeReplyObject is passed a NULL value: ");
     freeReplyObject(reply);
@@ -357,11 +357,11 @@ static void test_free_null(void) {
 }
 
 static void test_blocking_connection_errors(void) {
-    redisContext *c;
+    mongoContext *c;
 
     test("Returns error when host cannot be resolved: ");
-    c = redisConnect((char*)"idontexist.test", 6379);
-    test_cond(c->err == REDIS_ERR_OTHER &&
+    c = mongoConnect((char*)"idontexist.test", 6379);
+    test_cond(c->err == MONGO_ERR_OTHER &&
         (strcmp(c->errstr,"Name or service not known") == 0 ||
          strcmp(c->errstr,"Can't resolve: idontexist.test") == 0 ||
          strcmp(c->errstr,"nodename nor servname provided, or not known") == 0 ||
@@ -369,51 +369,51 @@ static void test_blocking_connection_errors(void) {
          strcmp(c->errstr,"Temporary failure in name resolution") == 0 ||
          strcmp(c->errstr,"hostname nor servname provided, or not known") == 0 ||
          strcmp(c->errstr,"no address associated with name") == 0));
-    redisFree(c);
+    mongoFree(c);
 
     test("Returns error when the port is not open: ");
-    c = redisConnect((char*)"localhost", 1);
-    test_cond(c->err == REDIS_ERR_IO &&
+    c = mongoConnect((char*)"localhost", 1);
+    test_cond(c->err == MONGO_ERR_IO &&
         strcmp(c->errstr,"Connection refused") == 0);
-    redisFree(c);
+    mongoFree(c);
 
     test("Returns error when the unix_sock socket path doesn't accept connections: ");
-    c = redisConnectUnix((char*)"/tmp/idontexist.sock");
-    test_cond(c->err == REDIS_ERR_IO); /* Don't care about the message... */
-    redisFree(c);
+    c = mongoConnectUnix((char*)"/tmp/idontexist.sock");
+    test_cond(c->err == MONGO_ERR_IO); /* Don't care about the message... */
+    mongoFree(c);
 }
 
 static void test_blocking_connection(struct config config) {
-    redisContext *c;
-    redisReply *reply;
+    mongoContext *c;
+    mongoReply *reply;
 
     c = connect(config);
 
     test("Is able to deliver commands: ");
-    reply = redisCommand(c,"PING");
-    test_cond(reply->type == REDIS_REPLY_STATUS &&
+    reply = mongoCommand(c,"PING");
+    test_cond(reply->type == MONGO_REPLY_STATUS &&
         strcasecmp(reply->str,"pong") == 0)
     freeReplyObject(reply);
 
     test("Is a able to send commands verbatim: ");
-    reply = redisCommand(c,"SET foo bar");
-    test_cond (reply->type == REDIS_REPLY_STATUS &&
+    reply = mongoCommand(c,"SET foo bar");
+    test_cond (reply->type == MONGO_REPLY_STATUS &&
         strcasecmp(reply->str,"ok") == 0)
     freeReplyObject(reply);
 
     test("%%s String interpolation works: ");
-    reply = redisCommand(c,"SET %s %s","foo","hello world");
+    reply = mongoCommand(c,"SET %s %s","foo","hello world");
     freeReplyObject(reply);
-    reply = redisCommand(c,"GET foo");
-    test_cond(reply->type == REDIS_REPLY_STRING &&
+    reply = mongoCommand(c,"GET foo");
+    test_cond(reply->type == MONGO_REPLY_STRING &&
         strcmp(reply->str,"hello world") == 0);
     freeReplyObject(reply);
 
     test("%%b String interpolation works: ");
-    reply = redisCommand(c,"SET %b %b","foo",(size_t)3,"hello\x00world",(size_t)11);
+    reply = mongoCommand(c,"SET %b %b","foo",(size_t)3,"hello\x00world",(size_t)11);
     freeReplyObject(reply);
-    reply = redisCommand(c,"GET foo");
-    test_cond(reply->type == REDIS_REPLY_STRING &&
+    reply = mongoCommand(c,"GET foo");
+    test_cond(reply->type == MONGO_REPLY_STRING &&
         memcmp(reply->str,"hello\x00world",11) == 0)
 
     test("Binary reply length is correct: ");
@@ -421,21 +421,21 @@ static void test_blocking_connection(struct config config) {
     freeReplyObject(reply);
 
     test("Can parse nil replies: ");
-    reply = redisCommand(c,"GET nokey");
-    test_cond(reply->type == REDIS_REPLY_NIL)
+    reply = mongoCommand(c,"GET nokey");
+    test_cond(reply->type == MONGO_REPLY_NIL)
     freeReplyObject(reply);
 
     /* test 7 */
     test("Can parse integer replies: ");
-    reply = redisCommand(c,"INCR mycounter");
-    test_cond(reply->type == REDIS_REPLY_INTEGER && reply->integer == 1)
+    reply = mongoCommand(c,"INCR mycounter");
+    test_cond(reply->type == MONGO_REPLY_INTEGER && reply->integer == 1)
     freeReplyObject(reply);
 
     test("Can parse multi bulk replies: ");
-    freeReplyObject(redisCommand(c,"LPUSH mylist foo"));
-    freeReplyObject(redisCommand(c,"LPUSH mylist bar"));
-    reply = redisCommand(c,"LRANGE mylist 0 -1");
-    test_cond(reply->type == REDIS_REPLY_ARRAY &&
+    freeReplyObject(mongoCommand(c,"LPUSH mylist foo"));
+    freeReplyObject(mongoCommand(c,"LPUSH mylist bar"));
+    reply = mongoCommand(c,"LRANGE mylist 0 -1");
+    test_cond(reply->type == MONGO_REPLY_ARRAY &&
               reply->elements == 2 &&
               !memcmp(reply->element[0]->str,"bar",3) &&
               !memcmp(reply->element[1]->str,"foo",3))
@@ -444,17 +444,17 @@ static void test_blocking_connection(struct config config) {
     /* m/e with multi bulk reply *before* other reply.
      * specifically test ordering of reply items to parse. */
     test("Can handle nested multi bulk replies: ");
-    freeReplyObject(redisCommand(c,"MULTI"));
-    freeReplyObject(redisCommand(c,"LRANGE mylist 0 -1"));
-    freeReplyObject(redisCommand(c,"PING"));
-    reply = (redisCommand(c,"EXEC"));
-    test_cond(reply->type == REDIS_REPLY_ARRAY &&
+    freeReplyObject(mongoCommand(c,"MULTI"));
+    freeReplyObject(mongoCommand(c,"LRANGE mylist 0 -1"));
+    freeReplyObject(mongoCommand(c,"PING"));
+    reply = (mongoCommand(c,"EXEC"));
+    test_cond(reply->type == MONGO_REPLY_ARRAY &&
               reply->elements == 2 &&
-              reply->element[0]->type == REDIS_REPLY_ARRAY &&
+              reply->element[0]->type == MONGO_REPLY_ARRAY &&
               reply->element[0]->elements == 2 &&
               !memcmp(reply->element[0]->element[0]->str,"bar",3) &&
               !memcmp(reply->element[0]->element[1]->str,"foo",3) &&
-              reply->element[1]->type == REDIS_REPLY_STATUS &&
+              reply->element[1]->type == MONGO_REPLY_STATUS &&
               strcasecmp(reply->element[1]->str,"pong") == 0);
     freeReplyObject(reply);
 
@@ -462,21 +462,21 @@ static void test_blocking_connection(struct config config) {
 }
 
 static void test_blocking_connection_timeouts(struct config config) {
-    redisContext *c;
-    redisReply *reply;
+    mongoContext *c;
+    mongoReply *reply;
     ssize_t s;
     const char *cmd = "DEBUG SLEEP 3\r\n";
     struct timeval tv;
 
     c = connect(config);
     test("Successfully completes a command when the timeout is not exceeded: ");
-    reply = redisCommand(c,"SET foo fast");
+    reply = mongoCommand(c,"SET foo fast");
     freeReplyObject(reply);
     tv.tv_sec = 0;
     tv.tv_usec = 10000;
-    redisSetTimeout(c, tv);
-    reply = redisCommand(c, "GET foo");
-    test_cond(reply != NULL && reply->type == REDIS_REPLY_STRING && memcmp(reply->str, "fast", 4) == 0);
+    mongoSetTimeout(c, tv);
+    reply = mongoCommand(c, "GET foo");
+    test_cond(reply != NULL && reply->type == MONGO_REPLY_STRING && memcmp(reply->str, "fast", 4) == 0);
     freeReplyObject(reply);
     disconnect(c, 0);
 
@@ -485,42 +485,42 @@ static void test_blocking_connection_timeouts(struct config config) {
     s = write(c->fd, cmd, strlen(cmd));
     tv.tv_sec = 0;
     tv.tv_usec = 10000;
-    redisSetTimeout(c, tv);
-    reply = redisCommand(c, "GET foo");
-    test_cond(s > 0 && reply == NULL && c->err == REDIS_ERR_IO && strcmp(c->errstr, "Resource temporarily unavailable") == 0);
+    mongoSetTimeout(c, tv);
+    reply = mongoCommand(c, "GET foo");
+    test_cond(s > 0 && reply == NULL && c->err == MONGO_ERR_IO && strcmp(c->errstr, "Resource temporarily unavailable") == 0);
     freeReplyObject(reply);
 
     test("Reconnect properly reconnects after a timeout: ");
-    redisReconnect(c);
-    reply = redisCommand(c, "PING");
-    test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
+    mongoReconnect(c);
+    reply = mongoCommand(c, "PING");
+    test_cond(reply != NULL && reply->type == MONGO_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
     freeReplyObject(reply);
 
     test("Reconnect properly uses owned parameters: ");
     config.tcp.host = "foo";
     config.unix_sock.path = "foo";
-    redisReconnect(c);
-    reply = redisCommand(c, "PING");
-    test_cond(reply != NULL && reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
+    mongoReconnect(c);
+    reply = mongoCommand(c, "PING");
+    test_cond(reply != NULL && reply->type == MONGO_REPLY_STATUS && strcmp(reply->str, "PONG") == 0);
     freeReplyObject(reply);
 
     disconnect(c, 0);
 }
 
 static void test_blocking_io_errors(struct config config) {
-    redisContext *c;
-    redisReply *reply;
+    mongoContext *c;
+    mongoReply *reply;
     void *_reply;
     int major, minor;
 
     /* Connect to target given by config. */
     c = connect(config);
     {
-        /* Find out Redis version to determine the path for the next test */
-        const char *field = "redis_version:";
+        /* Find out Mongo version to determine the path for the next test */
+        const char *field = "mongo_version:";
         char *p, *eptr;
 
-        reply = redisCommand(c,"INFO");
+        reply = mongoCommand(c,"INFO");
         p = strstr(reply->str,field);
         major = strtol(p+strlen(field),&eptr,10);
         p = eptr+1; /* char next to the first "." */
@@ -529,12 +529,12 @@ static void test_blocking_io_errors(struct config config) {
     }
 
     test("Returns I/O error when the connection is lost: ");
-    reply = redisCommand(c,"QUIT");
+    reply = mongoCommand(c,"QUIT");
     if (major > 2 || (major == 2 && minor > 0)) {
         /* > 2.0 returns OK on QUIT and read() should be issued once more
          * to know the descriptor is at EOF. */
         test_cond(strcasecmp(reply->str,"OK") == 0 &&
-            redisGetReply(c,&_reply) == REDIS_ERR);
+            mongoGetReply(c,&_reply) == MONGO_ERR);
         freeReplyObject(reply);
     } else {
         test_cond(reply == NULL);
@@ -545,70 +545,70 @@ static void test_blocking_io_errors(struct config config) {
      * On >2.0, QUIT will return with OK and another read(2) needed to be
      * issued to find out the socket was closed by the server. In both
      * conditions, the error will be set to EOF. */
-    assert(c->err == REDIS_ERR_EOF &&
+    assert(c->err == MONGO_ERR_EOF &&
         strcmp(c->errstr,"Server closed the connection") == 0);
-    redisFree(c);
+    mongoFree(c);
 
     c = connect(config);
     test("Returns I/O error on socket timeout: ");
     struct timeval tv = { 0, 1000 };
-    assert(redisSetTimeout(c,tv) == REDIS_OK);
-    test_cond(redisGetReply(c,&_reply) == REDIS_ERR &&
-        c->err == REDIS_ERR_IO && errno == EAGAIN);
-    redisFree(c);
+    assert(mongoSetTimeout(c,tv) == MONGO_OK);
+    test_cond(mongoGetReply(c,&_reply) == MONGO_ERR &&
+        c->err == MONGO_ERR_IO && errno == EAGAIN);
+    mongoFree(c);
 }
 
 static void test_invalid_timeout_errors(struct config config) {
-    redisContext *c;
+    mongoContext *c;
 
-    test("Set error when an invalid timeout usec value is given to redisConnectWithTimeout: ");
+    test("Set error when an invalid timeout usec value is given to mongoConnectWithTimeout: ");
 
     config.tcp.timeout.tv_sec = 0;
     config.tcp.timeout.tv_usec = 10000001;
 
-    c = redisConnectWithTimeout(config.tcp.host, config.tcp.port, config.tcp.timeout);
+    c = mongoConnectWithTimeout(config.tcp.host, config.tcp.port, config.tcp.timeout);
 
-    test_cond(c->err == REDIS_ERR_IO && strcmp(c->errstr, "Invalid timeout specified") == 0);
-    redisFree(c);
+    test_cond(c->err == MONGO_ERR_IO && strcmp(c->errstr, "Invalid timeout specified") == 0);
+    mongoFree(c);
 
-    test("Set error when an invalid timeout sec value is given to redisConnectWithTimeout: ");
+    test("Set error when an invalid timeout sec value is given to mongoConnectWithTimeout: ");
 
     config.tcp.timeout.tv_sec = (((LONG_MAX) - 999) / 1000) + 1;
     config.tcp.timeout.tv_usec = 0;
 
-    c = redisConnectWithTimeout(config.tcp.host, config.tcp.port, config.tcp.timeout);
+    c = mongoConnectWithTimeout(config.tcp.host, config.tcp.port, config.tcp.timeout);
 
-    test_cond(c->err == REDIS_ERR_IO && strcmp(c->errstr, "Invalid timeout specified") == 0);
-    redisFree(c);
+    test_cond(c->err == MONGO_ERR_IO && strcmp(c->errstr, "Invalid timeout specified") == 0);
+    mongoFree(c);
 }
 
 static void test_throughput(struct config config) {
-    redisContext *c = connect(config);
-    redisReply **replies;
+    mongoContext *c = connect(config);
+    mongoReply **replies;
     int i, num;
     long long t1, t2;
 
     test("Throughput:\n");
     for (i = 0; i < 500; i++)
-        freeReplyObject(redisCommand(c,"LPUSH mylist foo"));
+        freeReplyObject(mongoCommand(c,"LPUSH mylist foo"));
 
     num = 1000;
-    replies = malloc(sizeof(redisReply*)*num);
+    replies = malloc(sizeof(mongoReply*)*num);
     t1 = usec();
     for (i = 0; i < num; i++) {
-        replies[i] = redisCommand(c,"PING");
-        assert(replies[i] != NULL && replies[i]->type == REDIS_REPLY_STATUS);
+        replies[i] = mongoCommand(c,"PING");
+        assert(replies[i] != NULL && replies[i]->type == MONGO_REPLY_STATUS);
     }
     t2 = usec();
     for (i = 0; i < num; i++) freeReplyObject(replies[i]);
     free(replies);
     printf("\t(%dx PING: %.3fs)\n", num, (t2-t1)/1000000.0);
 
-    replies = malloc(sizeof(redisReply*)*num);
+    replies = malloc(sizeof(mongoReply*)*num);
     t1 = usec();
     for (i = 0; i < num; i++) {
-        replies[i] = redisCommand(c,"LRANGE mylist 0 499");
-        assert(replies[i] != NULL && replies[i]->type == REDIS_REPLY_ARRAY);
+        replies[i] = mongoCommand(c,"LRANGE mylist 0 499");
+        assert(replies[i] != NULL && replies[i]->type == MONGO_REPLY_ARRAY);
         assert(replies[i] != NULL && replies[i]->elements == 500);
     }
     t2 = usec();
@@ -617,26 +617,26 @@ static void test_throughput(struct config config) {
     printf("\t(%dx LRANGE with 500 elements: %.3fs)\n", num, (t2-t1)/1000000.0);
 
     num = 10000;
-    replies = malloc(sizeof(redisReply*)*num);
+    replies = malloc(sizeof(mongoReply*)*num);
     for (i = 0; i < num; i++)
-        redisAppendCommand(c,"PING");
+        mongoAppendCommand(c,"PING");
     t1 = usec();
     for (i = 0; i < num; i++) {
-        assert(redisGetReply(c, (void*)&replies[i]) == REDIS_OK);
-        assert(replies[i] != NULL && replies[i]->type == REDIS_REPLY_STATUS);
+        assert(mongoGetReply(c, (void*)&replies[i]) == MONGO_OK);
+        assert(replies[i] != NULL && replies[i]->type == MONGO_REPLY_STATUS);
     }
     t2 = usec();
     for (i = 0; i < num; i++) freeReplyObject(replies[i]);
     free(replies);
     printf("\t(%dx PING (pipelined): %.3fs)\n", num, (t2-t1)/1000000.0);
 
-    replies = malloc(sizeof(redisReply*)*num);
+    replies = malloc(sizeof(mongoReply*)*num);
     for (i = 0; i < num; i++)
-        redisAppendCommand(c,"LRANGE mylist 0 499");
+        mongoAppendCommand(c,"LRANGE mylist 0 499");
     t1 = usec();
     for (i = 0; i < num; i++) {
-        assert(redisGetReply(c, (void*)&replies[i]) == REDIS_OK);
-        assert(replies[i] != NULL && replies[i]->type == REDIS_REPLY_ARRAY);
+        assert(mongoGetReply(c, (void*)&replies[i]) == MONGO_OK);
+        assert(replies[i] != NULL && replies[i]->type == MONGO_REPLY_ARRAY);
         assert(replies[i] != NULL && replies[i]->elements == 500);
     }
     t2 = usec();
@@ -648,14 +648,14 @@ static void test_throughput(struct config config) {
 }
 
 // static long __test_callback_flags = 0;
-// static void __test_callback(redisContext *c, void *privdata) {
+// static void __test_callback(mongoContext *c, void *privdata) {
 //     ((void)c);
 //     /* Shift to detect execution order */
 //     __test_callback_flags <<= 8;
 //     __test_callback_flags |= (long)privdata;
 // }
 //
-// static void __test_reply_callback(redisContext *c, redisReply *reply, void *privdata) {
+// static void __test_reply_callback(mongoContext *c, mongoReply *reply, void *privdata) {
 //     ((void)c);
 //     /* Shift to detect execution order */
 //     __test_callback_flags <<= 8;
@@ -663,87 +663,87 @@ static void test_throughput(struct config config) {
 //     if (reply) freeReplyObject(reply);
 // }
 //
-// static redisContext *__connect_nonblock() {
+// static mongoContext *__connect_nonblock() {
 //     /* Reset callback flags */
 //     __test_callback_flags = 0;
-//     return redisConnectNonBlock("127.0.0.1", port, NULL);
+//     return mongoConnectNonBlock("127.0.0.1", port, NULL);
 // }
 //
 // static void test_nonblocking_connection() {
-//     redisContext *c;
+//     mongoContext *c;
 //     int wdone = 0;
 //
 //     test("Calls command callback when command is issued: ");
 //     c = __connect_nonblock();
-//     redisSetCommandCallback(c,__test_callback,(void*)1);
-//     redisCommand(c,"PING");
+//     mongoSetCommandCallback(c,__test_callback,(void*)1);
+//     mongoCommand(c,"PING");
 //     test_cond(__test_callback_flags == 1);
-//     redisFree(c);
+//     mongoFree(c);
 //
-//     test("Calls disconnect callback on redisDisconnect: ");
+//     test("Calls disconnect callback on mongoDisconnect: ");
 //     c = __connect_nonblock();
-//     redisSetDisconnectCallback(c,__test_callback,(void*)2);
-//     redisDisconnect(c);
+//     mongoSetDisconnectCallback(c,__test_callback,(void*)2);
+//     mongoDisconnect(c);
 //     test_cond(__test_callback_flags == 2);
-//     redisFree(c);
+//     mongoFree(c);
 //
-//     test("Calls disconnect callback and free callback on redisFree: ");
+//     test("Calls disconnect callback and free callback on mongoFree: ");
 //     c = __connect_nonblock();
-//     redisSetDisconnectCallback(c,__test_callback,(void*)2);
-//     redisSetFreeCallback(c,__test_callback,(void*)4);
-//     redisFree(c);
+//     mongoSetDisconnectCallback(c,__test_callback,(void*)2);
+//     mongoSetFreeCallback(c,__test_callback,(void*)4);
+//     mongoFree(c);
 //     test_cond(__test_callback_flags == ((2 << 8) | 4));
 //
-//     test("redisBufferWrite against empty write buffer: ");
+//     test("mongoBufferWrite against empty write buffer: ");
 //     c = __connect_nonblock();
-//     test_cond(redisBufferWrite(c,&wdone) == REDIS_OK && wdone == 1);
-//     redisFree(c);
+//     test_cond(mongoBufferWrite(c,&wdone) == MONGO_OK && wdone == 1);
+//     mongoFree(c);
 //
-//     test("redisBufferWrite against not yet connected fd: ");
+//     test("mongoBufferWrite against not yet connected fd: ");
 //     c = __connect_nonblock();
-//     redisCommand(c,"PING");
-//     test_cond(redisBufferWrite(c,NULL) == REDIS_ERR &&
+//     mongoCommand(c,"PING");
+//     test_cond(mongoBufferWrite(c,NULL) == MONGO_ERR &&
 //               strncmp(c->error,"write:",6) == 0);
-//     redisFree(c);
+//     mongoFree(c);
 //
-//     test("redisBufferWrite against closed fd: ");
+//     test("mongoBufferWrite against closed fd: ");
 //     c = __connect_nonblock();
-//     redisCommand(c,"PING");
-//     redisDisconnect(c);
-//     test_cond(redisBufferWrite(c,NULL) == REDIS_ERR &&
+//     mongoCommand(c,"PING");
+//     mongoDisconnect(c);
+//     test_cond(mongoBufferWrite(c,NULL) == MONGO_ERR &&
 //               strncmp(c->error,"write:",6) == 0);
-//     redisFree(c);
+//     mongoFree(c);
 //
 //     test("Process callbacks in the right sequence: ");
 //     c = __connect_nonblock();
-//     redisCommandWithCallback(c,__test_reply_callback,(void*)1,"PING");
-//     redisCommandWithCallback(c,__test_reply_callback,(void*)2,"PING");
-//     redisCommandWithCallback(c,__test_reply_callback,(void*)3,"PING");
+//     mongoCommandWithCallback(c,__test_reply_callback,(void*)1,"PING");
+//     mongoCommandWithCallback(c,__test_reply_callback,(void*)2,"PING");
+//     mongoCommandWithCallback(c,__test_reply_callback,(void*)3,"PING");
 //
 //     /* Write output buffer */
 //     wdone = 0;
 //     while(!wdone) {
 //         usleep(500);
-//         redisBufferWrite(c,&wdone);
+//         mongoBufferWrite(c,&wdone);
 //     }
 //
 //     /* Read until at least one callback is executed (the 3 replies will
 //      * arrive in a single packet, causing all callbacks to be executed in
 //      * a single pass). */
 //     while(__test_callback_flags == 0) {
-//         assert(redisBufferRead(c) == REDIS_OK);
-//         redisProcessCallbacks(c);
+//         assert(mongoBufferRead(c) == MONGO_OK);
+//         mongoProcessCallbacks(c);
 //     }
 //     test_cond(__test_callback_flags == 0x010203);
-//     redisFree(c);
+//     mongoFree(c);
 //
-//     test("redisDisconnect executes pending callbacks with NULL reply: ");
+//     test("mongoDisconnect executes pending callbacks with NULL reply: ");
 //     c = __connect_nonblock();
-//     redisSetDisconnectCallback(c,__test_callback,(void*)1);
-//     redisCommandWithCallback(c,__test_reply_callback,(void*)2,"PING");
-//     redisDisconnect(c);
+//     mongoSetDisconnectCallback(c,__test_callback,(void*)1);
+//     mongoCommandWithCallback(c,__test_reply_callback,(void*)2,"PING");
+//     mongoDisconnect(c);
 //     test_cond(__test_callback_flags == 0x0201);
-//     redisFree(c);
+//     mongoFree(c);
 // }
 
 int main(int argc, char **argv) {
@@ -753,7 +753,7 @@ int main(int argc, char **argv) {
             .port = 6379
         },
         .unix_sock = {
-            .path = "/tmp/redis.sock"
+            .path = "/tmp/mongo.sock"
         }
     };
     int throughput = 1;

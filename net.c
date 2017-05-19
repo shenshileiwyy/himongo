@@ -54,62 +54,62 @@
 #include "net.h"
 #include "sds.h"
 
-/* Defined in hiredis.c */
-void __redisSetError(redisContext *c, int type, const char *str);
+/* Defined in himongo.c */
+void __mongoSetError(mongoContext *c, int type, const char *str);
 
-static void redisContextCloseFd(redisContext *c) {
+static void mongoContextCloseFd(mongoContext *c) {
     if (c && c->fd >= 0) {
         close(c->fd);
         c->fd = -1;
     }
 }
 
-static void __redisSetErrorFromErrno(redisContext *c, int type, const char *prefix) {
+static void __mongoSetErrorFromErrno(mongoContext *c, int type, const char *prefix) {
     int errorno = errno;  /* snprintf() may change errno */
     char buf[128] = { 0 };
     size_t len = 0;
 
     if (prefix != NULL)
         len = snprintf(buf,sizeof(buf),"%s: ",prefix);
-    __redis_strerror_r(errorno, (char *)(buf + len), sizeof(buf) - len);
-    __redisSetError(c,type,buf);
+    __mongo_strerror_r(errorno, (char *)(buf + len), sizeof(buf) - len);
+    __mongoSetError(c,type,buf);
 }
 
-static int redisSetReuseAddr(redisContext *c) {
+static int mongoSetReuseAddr(mongoContext *c) {
     int on = 1;
     if (setsockopt(c->fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
-        redisContextCloseFd(c);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,NULL);
+        mongoContextCloseFd(c);
+        return MONGO_ERR;
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int redisCreateSocket(redisContext *c, int type) {
+static int mongoCreateSocket(mongoContext *c, int type) {
     int s;
     if ((s = socket(type, SOCK_STREAM, 0)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,NULL);
+        return MONGO_ERR;
     }
     c->fd = s;
     if (type == AF_INET) {
-        if (redisSetReuseAddr(c) == REDIS_ERR) {
-            return REDIS_ERR;
+        if (mongoSetReuseAddr(c) == MONGO_ERR) {
+            return MONGO_ERR;
         }
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int redisSetBlocking(redisContext *c, int blocking) {
+static int mongoSetBlocking(mongoContext *c, int blocking) {
     int flags;
 
     /* Set the socket nonblocking.
      * Note that fcntl(2) for F_GETFL and F_SETFL can't be
      * interrupted by a signal. */
     if ((flags = fcntl(c->fd, F_GETFL)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"fcntl(F_GETFL)");
-        redisContextCloseFd(c);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"fcntl(F_GETFL)");
+        mongoContextCloseFd(c);
+        return MONGO_ERR;
     }
 
     if (blocking)
@@ -118,68 +118,68 @@ static int redisSetBlocking(redisContext *c, int blocking) {
         flags |= O_NONBLOCK;
 
     if (fcntl(c->fd, F_SETFL, flags) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"fcntl(F_SETFL)");
-        redisContextCloseFd(c);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"fcntl(F_SETFL)");
+        mongoContextCloseFd(c);
+        return MONGO_ERR;
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-int redisKeepAlive(redisContext *c, int interval) {
+int mongoKeepAlive(mongoContext *c, int interval) {
     int val = 1;
     int fd = c->fd;
 
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1){
-        __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
-        return REDIS_ERR;
+        __mongoSetError(c,MONGO_ERR_OTHER,strerror(errno));
+        return MONGO_ERR;
     }
 
     val = interval;
 
 #ifdef _OSX
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &val, sizeof(val)) < 0) {
-        __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
-        return REDIS_ERR;
+        __mongoSetError(c,MONGO_ERR_OTHER,strerror(errno));
+        return MONGO_ERR;
     }
 #else
 #if defined(__GLIBC__) && !defined(__FreeBSD_kernel__)
     val = interval;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) < 0) {
-        __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
-        return REDIS_ERR;
+        __mongoSetError(c,MONGO_ERR_OTHER,strerror(errno));
+        return MONGO_ERR;
     }
 
     val = interval/3;
     if (val == 0) val = 1;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) < 0) {
-        __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
-        return REDIS_ERR;
+        __mongoSetError(c,MONGO_ERR_OTHER,strerror(errno));
+        return MONGO_ERR;
     }
 
     val = 3;
     if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) < 0) {
-        __redisSetError(c,REDIS_ERR_OTHER,strerror(errno));
-        return REDIS_ERR;
+        __mongoSetError(c,MONGO_ERR_OTHER,strerror(errno));
+        return MONGO_ERR;
     }
 #endif
 #endif
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int redisSetTcpNoDelay(redisContext *c) {
+static int mongoSetTcpNoDelay(mongoContext *c) {
     int yes = 1;
     if (setsockopt(c->fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(TCP_NODELAY)");
-        redisContextCloseFd(c);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"setsockopt(TCP_NODELAY)");
+        mongoContextCloseFd(c);
+        return MONGO_ERR;
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
 #define __MAX_MSEC (((LONG_MAX) - 999) / 1000)
 
-static int redisContextTimeoutMsec(redisContext *c, long *result)
+static int mongoContextTimeoutMsec(mongoContext *c, long *result)
 {
     const struct timeval *timeout = c->timeout;
     long msec = -1;
@@ -188,7 +188,7 @@ static int redisContextTimeoutMsec(redisContext *c, long *result)
     if (timeout != NULL) {
         if (timeout->tv_usec > 1000000 || timeout->tv_sec > __MAX_MSEC) {
             *result = msec;
-            return REDIS_ERR;
+            return MONGO_ERR;
         }
 
         msec = (timeout->tv_sec * 1000) + ((timeout->tv_usec + 999) / 1000);
@@ -199,10 +199,10 @@ static int redisContextTimeoutMsec(redisContext *c, long *result)
     }
 
     *result = msec;
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int redisContextWaitReady(redisContext *c, long msec) {
+static int mongoContextWaitReady(mongoContext *c, long msec) {
     struct pollfd   wfd[1];
 
     wfd[0].fd     = c->fd;
@@ -212,70 +212,70 @@ static int redisContextWaitReady(redisContext *c, long msec) {
         int res;
 
         if ((res = poll(wfd, 1, msec)) == -1) {
-            __redisSetErrorFromErrno(c, REDIS_ERR_IO, "poll(2)");
-            redisContextCloseFd(c);
-            return REDIS_ERR;
+            __mongoSetErrorFromErrno(c, MONGO_ERR_IO, "poll(2)");
+            mongoContextCloseFd(c);
+            return MONGO_ERR;
         } else if (res == 0) {
             errno = ETIMEDOUT;
-            __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
-            redisContextCloseFd(c);
-            return REDIS_ERR;
+            __mongoSetErrorFromErrno(c,MONGO_ERR_IO,NULL);
+            mongoContextCloseFd(c);
+            return MONGO_ERR;
         }
 
-        if (redisCheckSocketError(c) != REDIS_OK)
-            return REDIS_ERR;
+        if (mongoCheckSocketError(c) != MONGO_OK)
+            return MONGO_ERR;
 
-        return REDIS_OK;
+        return MONGO_OK;
     }
 
-    __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
-    redisContextCloseFd(c);
-    return REDIS_ERR;
+    __mongoSetErrorFromErrno(c,MONGO_ERR_IO,NULL);
+    mongoContextCloseFd(c);
+    return MONGO_ERR;
 }
 
-int redisCheckSocketError(redisContext *c) {
+int mongoCheckSocketError(mongoContext *c) {
     int err = 0;
     socklen_t errlen = sizeof(err);
 
     if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &err, &errlen) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"getsockopt(SO_ERROR)");
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"getsockopt(SO_ERROR)");
+        return MONGO_ERR;
     }
 
     if (err) {
         errno = err;
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,NULL);
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,NULL);
+        return MONGO_ERR;
     }
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-int redisContextSetTimeout(redisContext *c, const struct timeval tv) {
+int mongoContextSetTimeout(mongoContext *c, const struct timeval tv) {
     if (setsockopt(c->fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_RCVTIMEO)");
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"setsockopt(SO_RCVTIMEO)");
+        return MONGO_ERR;
     }
     if (setsockopt(c->fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv)) == -1) {
-        __redisSetErrorFromErrno(c,REDIS_ERR_IO,"setsockopt(SO_SNDTIMEO)");
-        return REDIS_ERR;
+        __mongoSetErrorFromErrno(c,MONGO_ERR_IO,"setsockopt(SO_SNDTIMEO)");
+        return MONGO_ERR;
     }
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
-static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
+static int _mongoContextConnectTcp(mongoContext *c, const char *addr, int port,
                                    const struct timeval *timeout,
                                    const char *source_addr) {
     int s, rv, n;
     char _port[6];  /* strlen("65535"); */
     struct addrinfo hints, *servinfo, *bservinfo, *p, *b;
-    int blocking = (c->flags & REDIS_BLOCK);
-    int reuseaddr = (c->flags & REDIS_REUSEADDR);
+    int blocking = (c->flags & MONGO_BLOCK);
+    int reuseaddr = (c->flags & MONGO_REUSEADDR);
     int reuses = 0;
     long timeout_msec = -1;
 
     servinfo = NULL;
-    c->connection_type = REDIS_CONN_TCP;
+    c->connection_type = MONGO_CONN_TCP;
     c->tcp.port = port;
 
     /* We need to take possession of the passed parameters
@@ -305,8 +305,8 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
         c->timeout = NULL;
     }
 
-    if (redisContextTimeoutMsec(c, &timeout_msec) != REDIS_OK) {
-        __redisSetError(c, REDIS_ERR_IO, "Invalid timeout specified");
+    if (mongoContextTimeoutMsec(c, &timeout_msec) != MONGO_OK) {
+        __mongoSetError(c, MONGO_ERR_IO, "Invalid timeout specified");
         goto error;
     }
 
@@ -324,15 +324,15 @@ static int _redisContextConnectTcp(redisContext *c, const char *addr, int port,
     hints.ai_socktype = SOCK_STREAM;
 
     /* Try with IPv6 if no IPv4 address was found. We do it in this order since
-     * in a Redis client you can't afford to test if you have IPv6 connectivity
+     * in a Mongo client you can't afford to test if you have IPv6 connectivity
      * as this would add latency to every connect. Otherwise a more sensible
      * route could be: Use IPv6 if both addresses are available and there is IPv6
      * connectivity. */
     if ((rv = getaddrinfo(c->tcp.host,_port,&hints,&servinfo)) != 0) {
          hints.ai_family = AF_INET6;
          if ((rv = getaddrinfo(addr,_port,&hints,&servinfo)) != 0) {
-            __redisSetError(c,REDIS_ERR_OTHER,gai_strerror(rv));
-            return REDIS_ERR;
+            __mongoSetError(c,MONGO_ERR_OTHER,gai_strerror(rv));
+            return MONGO_ERR;
         }
     }
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -341,7 +341,7 @@ addrretry:
             continue;
 
         c->fd = s;
-        if (redisSetBlocking(c,0) != REDIS_OK)
+        if (mongoSetBlocking(c,0) != MONGO_OK)
             goto error;
         if (c->tcp.source_addr) {
             int bound = 0;
@@ -349,7 +349,7 @@ addrretry:
             if ((rv = getaddrinfo(c->tcp.source_addr, NULL, &hints, &bservinfo)) != 0) {
                 char buf[128];
                 snprintf(buf,sizeof(buf),"Can't get addr: %s",gai_strerror(rv));
-                __redisSetError(c,REDIS_ERR_OTHER,buf);
+                __mongoSetError(c,MONGO_ERR_OTHER,buf);
                 goto error;
             }
 
@@ -371,73 +371,73 @@ addrretry:
             if (!bound) {
                 char buf[128];
                 snprintf(buf,sizeof(buf),"Can't bind socket: %s",strerror(errno));
-                __redisSetError(c,REDIS_ERR_OTHER,buf);
+                __mongoSetError(c,MONGO_ERR_OTHER,buf);
                 goto error;
             }
         }
         if (connect(s,p->ai_addr,p->ai_addrlen) == -1) {
             if (errno == EHOSTUNREACH) {
-                redisContextCloseFd(c);
+                mongoContextCloseFd(c);
                 continue;
             } else if (errno == EINPROGRESS && !blocking) {
                 /* This is ok. */
             } else if (errno == EADDRNOTAVAIL && reuseaddr) {
-                if (++reuses >= REDIS_CONNECT_RETRIES) {
+                if (++reuses >= MONGO_CONNECT_RETRIES) {
                     goto error;
                 } else {
-                    redisContextCloseFd(c);
+                    mongoContextCloseFd(c);
                     goto addrretry;
                 }
             } else {
-                if (redisContextWaitReady(c,timeout_msec) != REDIS_OK)
+                if (mongoContextWaitReady(c,timeout_msec) != MONGO_OK)
                     goto error;
             }
         }
-        if (blocking && redisSetBlocking(c,1) != REDIS_OK)
+        if (blocking && mongoSetBlocking(c,1) != MONGO_OK)
             goto error;
-        if (redisSetTcpNoDelay(c) != REDIS_OK)
+        if (mongoSetTcpNoDelay(c) != MONGO_OK)
             goto error;
 
-        c->flags |= REDIS_CONNECTED;
-        rv = REDIS_OK;
+        c->flags |= MONGO_CONNECTED;
+        rv = MONGO_OK;
         goto end;
     }
     if (p == NULL) {
         char buf[128];
         snprintf(buf,sizeof(buf),"Can't create socket: %s",strerror(errno));
-        __redisSetError(c,REDIS_ERR_OTHER,buf);
+        __mongoSetError(c,MONGO_ERR_OTHER,buf);
         goto error;
     }
 
 error:
-    rv = REDIS_ERR;
+    rv = MONGO_ERR;
 end:
     freeaddrinfo(servinfo);
-    return rv;  // Need to return REDIS_OK if alright
+    return rv;  // Need to return MONGO_OK if alright
 }
 
-int redisContextConnectTcp(redisContext *c, const char *addr, int port,
+int mongoContextConnectTcp(mongoContext *c, const char *addr, int port,
                            const struct timeval *timeout) {
-    return _redisContextConnectTcp(c, addr, port, timeout, NULL);
+    return _mongoContextConnectTcp(c, addr, port, timeout, NULL);
 }
 
-int redisContextConnectBindTcp(redisContext *c, const char *addr, int port,
+int mongoContextConnectBindTcp(mongoContext *c, const char *addr, int port,
                                const struct timeval *timeout,
                                const char *source_addr) {
-    return _redisContextConnectTcp(c, addr, port, timeout, source_addr);
+    return _mongoContextConnectTcp(c, addr, port, timeout, source_addr);
 }
 
-int redisContextConnectUnix(redisContext *c, const char *path, const struct timeval *timeout) {
-    int blocking = (c->flags & REDIS_BLOCK);
+int mongoContextConnectUnix(mongoContext *c, const char *path, const struct timeval *timeout) {
+    int blocking = (c->flags & MONGO_BLOCK);
     struct sockaddr_un sa;
     long timeout_msec = -1;
 
-    if (redisCreateSocket(c,AF_LOCAL) < 0)
-        return REDIS_ERR;
-    if (redisSetBlocking(c,0) != REDIS_OK)
-        return REDIS_ERR;
+    if (mongoCreateSocket(c,AF_LOCAL) < 0)
+        return MONGO_ERR;
+    if (mongoSetBlocking(c,0) != MONGO_OK)
+        return MONGO_ERR;
 
-    c->connection_type = REDIS_CONN_UNIX;
+    c->connection_type = MONGO_CONN_UNIX;
     if (c->unix_sock.path != path)
         c->unix_sock.path = strdup(path);
 
@@ -454,8 +454,8 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
         c->timeout = NULL;
     }
 
-    if (redisContextTimeoutMsec(c,&timeout_msec) != REDIS_OK)
-        return REDIS_ERR;
+    if (mongoContextTimeoutMsec(c,&timeout_msec) != MONGO_OK)
+        return MONGO_ERR;
 
     sa.sun_family = AF_LOCAL;
     strncpy(sa.sun_path,path,sizeof(sa.sun_path)-1);
@@ -463,15 +463,15 @@ int redisContextConnectUnix(redisContext *c, const char *path, const struct time
         if (errno == EINPROGRESS && !blocking) {
             /* This is ok. */
         } else {
-            if (redisContextWaitReady(c,timeout_msec) != REDIS_OK)
-                return REDIS_ERR;
+            if (mongoContextWaitReady(c,timeout_msec) != MONGO_OK)
+                return MONGO_ERR;
         }
     }
 
     /* Reset socket to be blocking after connect(2). */
-    if (blocking && redisSetBlocking(c,1) != REDIS_OK)
-        return REDIS_ERR;
+    if (blocking && mongoSetBlocking(c,1) != MONGO_OK)
+        return MONGO_ERR;
 
-    c->flags |= REDIS_CONNECTED;
-    return REDIS_OK;
+    c->flags |= MONGO_CONNECTED;
+    return MONGO_OK;
 }

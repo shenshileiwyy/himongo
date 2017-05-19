@@ -1,5 +1,5 @@
-/hiredis-test
-/examples/hiredis-example*
+/himongo-test
+/examples/himongo-example*
 /*.o
 /*.so
 /*.dylib
