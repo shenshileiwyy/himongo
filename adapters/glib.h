@@ -1,63 +1,63 @@
-#ifndef __HIREDIS_GLIB_H__
-#define __HIREDIS_GLIB_H__
+#ifndef __HIMONGO_GLIB_H__
+#define __HIMONGO_GLIB_H__
 
 #include <glib.h>
 
-#include "../hiredis.h"
+#include "../himongo.h"
 #include "../async.h"
 
 typedef struct
 {
     GSource source;
-    redisAsyncContext *ac;
+    mongoAsyncContext *ac;
     GPollFD poll_fd;
-} RedisSource;
+} MongoSource;
 
 static void
-redis_source_add_read (gpointer data)
+mongo_source_add_read (gpointer data)
 {
-    RedisSource *source = (RedisSource *)data;
+    MongoSource *source = (MongoSource *)data;
     g_return_if_fail(source);
     source->poll_fd.events |= G_IO_IN;
     g_main_context_wakeup(g_source_get_context((GSource *)data));
 }
 
 static void
-redis_source_del_read (gpointer data)
+mongo_source_del_read (gpointer data)
 {
-    RedisSource *source = (RedisSource *)data;
+    MongoSource *source = (MongoSource *)data;
     g_return_if_fail(source);
     source->poll_fd.events &= ~G_IO_IN;
     g_main_context_wakeup(g_source_get_context((GSource *)data));
 }
 
 static void
-redis_source_add_write (gpointer data)
+mongo_source_add_write (gpointer data)
 {
-    RedisSource *source = (RedisSource *)data;
+    MongoSource *source = (MongoSource *)data;
     g_return_if_fail(source);
     source->poll_fd.events |= G_IO_OUT;
     g_main_context_wakeup(g_source_get_context((GSource *)data));
 }
 
 static void
-redis_source_del_write (gpointer data)
+mongo_source_del_write (gpointer data)
 {
-    RedisSource *source = (RedisSource *)data;
+    MongoSource *source = (MongoSource *)data;
     g_return_if_fail(source);
     source->poll_fd.events &= ~G_IO_OUT;
     g_main_context_wakeup(g_source_get_context((GSource *)data));
 }
 
 static void
-redis_source_cleanup (gpointer data)
+mongo_source_cleanup (gpointer data)
 {
-    RedisSource *source = (RedisSource *)data;
+    MongoSource *source = (MongoSource *)data;
 
     g_return_if_fail(source);
 
-    redis_source_del_read(source);
-    redis_source_del_write(source);
+    mongo_source_del_read(source);
+    mongo_source_del_write(source);
     /*
      * It is not our responsibility to remove ourself from the
      * current main loop. However, we will remove the GPollFD.
@@ -69,36 +69,36 @@ redis_source_cleanup (gpointer data)
 }
 
 static gboolean
-redis_source_prepare (GSource *source,
+mongo_source_prepare (GSource *source,
                       gint    *timeout_)
 {
-    RedisSource *redis = (RedisSource *)source;
+    MongoSource *mongo = (MongoSource *)source;
     *timeout_ = -1;
-    return !!(redis->poll_fd.events & redis->poll_fd.revents);
+    return !!(mongo->poll_fd.events & mongo->poll_fd.revents);
 }
 
 static gboolean
-redis_source_check (GSource *source)
+mongo_source_check (GSource *source)
 {
-    RedisSource *redis = (RedisSource *)source;
-    return !!(redis->poll_fd.events & redis->poll_fd.revents);
+    MongoSource *mongo = (MongoSource *)source;
+    return !!(mongo->poll_fd.events & mongo->poll_fd.revents);
 }
 
 static gboolean
-redis_source_dispatch (GSource      *source,
+mongo_source_dispatch (GSource      *source,
                        GSourceFunc   callback,
                        gpointer      user_data)
 {
-    RedisSource *redis = (RedisSource *)source;
+    MongoSource *mongo = (MongoSource *)source;
 
-    if ((redis->poll_fd.revents & G_IO_OUT)) {
-        redisAsyncHandleWrite(redis->ac);
-        redis->poll_fd.revents &= ~G_IO_OUT;
+    if ((mongo->poll_fd.revents & G_IO_OUT)) {
+        mongoAsyncHandleWrite(mongo->ac);
+        mongo->poll_fd.revents &= ~G_IO_OUT;
     }
 
-    if ((redis->poll_fd.revents & G_IO_IN)) {
-        redisAsyncHandleRead(redis->ac);
-        redis->poll_fd.revents &= ~G_IO_IN;
+    if ((mongo->poll_fd.revents & G_IO_IN)) {
+        mongoAsyncHandleRead(mongo->ac);
+        mongo->poll_fd.revents &= ~G_IO_IN;
     }
 
     if (callback) {
@@ -109,45 +109,45 @@ redis_source_dispatch (GSource      *source,
 }
 
 static void
-redis_source_finalize (GSource *source)
+mongo_source_finalize (GSource *source)
 {
-    RedisSource *redis = (RedisSource *)source;
+    MongoSource *mongo = (MongoSource *)source;
 
-    if (redis->poll_fd.fd >= 0) {
-        g_source_remove_poll(source, &redis->poll_fd);
-        redis->poll_fd.fd = -1;
+    if (mongo->poll_fd.fd >= 0) {
+        g_source_remove_poll(source, &mongo->poll_fd);
+        mongo->poll_fd.fd = -1;
     }
 }
 
 static GSource *
-redis_source_new (redisAsyncContext *ac)
+mongo_source_new (mongoAsyncContext *ac)
 {
     static GSourceFuncs source_funcs = {
-        .prepare  = redis_source_prepare,
-        .check     = redis_source_check,
-        .dispatch = redis_source_dispatch,
-        .finalize = redis_source_finalize,
+        .prepare  = mongo_source_prepare,
+        .check     = mongo_source_check,
+        .dispatch = mongo_source_dispatch,
+        .finalize = mongo_source_finalize,
     };
-    redisContext *c = &ac->c;
-    RedisSource *source;
+    mongoContext *c = &ac->c;
+    MongoSource *source;
 
     g_return_val_if_fail(ac != NULL, NULL);
 
-    source = (RedisSource *)g_source_new(&source_funcs, sizeof *source);
+    source = (MongoSource *)g_source_new(&source_funcs, sizeof *source);
     source->ac = ac;
     source->poll_fd.fd = c->fd;
     source->poll_fd.events = 0;
     source->poll_fd.revents = 0;
     g_source_add_poll((GSource *)source, &source->poll_fd);
 
-    ac->ev.addRead = redis_source_add_read;
-    ac->ev.delRead = redis_source_del_read;
-    ac->ev.addWrite = redis_source_add_write;
-    ac->ev.delWrite = redis_source_del_write;
-    ac->ev.cleanup = redis_source_cleanup;
+    ac->ev.addRead = mongo_source_add_read;
+    ac->ev.delRead = mongo_source_del_read;
+    ac->ev.addWrite = mongo_source_add_write;
+    ac->ev.delWrite = mongo_source_del_write;
+    ac->ev.cleanup = mongo_source_cleanup;
     ac->ev.data = source;
 
     return (GSource *)source;
 }
 
-#endif /* __HIREDIS_GLIB_H__ */
+#endif /* __HIMONGO_GLIB_H__ */

@@ -7,6 +7,9 @@ LIBBSON_STATICLIB := libbson/.libs/libbson.a
 LIBBSON_INC := libbson/src/bson
 OBJ=async.o endianconv.o himongo.o net.o proto.o read.o sds.o utils.o
 EXAMPLES=himongo-example himongo-example-libevent himongo-example-libev himongo-example-glib
+
+AR_SCRIPT := /tmp/libhimongo.ar
+
 # TESTS=himongo-test
 LIBNAME=libhimongo
 PKGCONFNAME=himongo.pc
@@ -25,17 +28,17 @@ INSTALL_INCLUDE_PATH= $(DESTDIR)$(PREFIX)/$(INCLUDE_PATH)
 INSTALL_LIBRARY_PATH= $(DESTDIR)$(PREFIX)/$(LIBRARY_PATH)
 INSTALL_PKGCONF_PATH= $(INSTALL_LIBRARY_PATH)/$(PKGCONF_PATH)
 
-# redis-server configuration used for testing
-# REDIS_PORT=56379
-# REDIS_SERVER=redis-server
-# define REDIS_TEST_CONFIG
-# 	daemonize yes
-# 	pidfile /tmp/himongo-test-redis.pid
-# 	port $(REDIS_PORT)
-# 	bind 127.0.0.1
-# 	unixsocket /tmp/himongo-test-redis.sock
-# endef
-# export REDIS_TEST_CONFIG
+# mongo-server configuration used for testing
+MONGO_PORT=56379
+MONGO_SERVER=mongo-server
+define MONGO_TEST_CONFIG
+	daemonize yes
+	pidfile /tmp/himongo-test-mongo.pid
+	port $(MONGO_PORT)
+	bind 127.0.0.1
+	unixsocket /tmp/himongo-test-mongo.sock
+endef
+export MONGO_TEST_CONFIG
 
 # Fallback to gcc when $CC is not in $PATH.
 CC:=$(shell sh -c 'type $(CC) >/dev/null 2>/dev/null && echo $(CC) || echo gcc')
@@ -69,7 +72,7 @@ ifeq ($(uname_S),Darwin)
   DYLIB_MAKE_CMD=$(CC) -shared -Wl,-install_name,$(DYLIB_MINOR_NAME) -o $(DYLIBNAME) $(LDFLAGS)
 endif
 
-all: $(STLIBNAME)
+all: $(DYLIBNAME) $(STLIBNAME)
 # all: $(DYLIBNAME) $(STLIBNAME) $(PKGCONFNAME)
 
 # Deps (use make dep to generate this)
@@ -90,11 +93,18 @@ libbson/Makefile: libbson/autogen.sh
 libbson/autogen.sh:
 	git submodule update --init
 
-$(DYLIBNAME): $(OBJ)
-	$(DYLIB_MAKE_CMD) $(OBJ)
+$(DYLIBNAME): $(LIBBSON_STATICLIB) $(OBJ)
+	$(DYLIB_MAKE_CMD) $(OBJ) $(LIBBSON_STATICLIB)
+
 
 $(STLIBNAME):  $(LIBBSON_STATICLIB) $(OBJ)
-	$(STLIB_MAKE_CMD) $(OBJ)
+	@echo "CREATE $@" > $(AR_SCRIPT)
+	@echo "ADDLIB $(LIBBSON_STATICLIB)" >> $(AR_SCRIPT)
+	@echo "ADDMOD $(OBJ)" >> $(AR_SCRIPT)
+	@echo "SAVE" >> $(AR_SCRIPT)
+	@echo "END" >> $(AR_SCRIPT)
+	@$(AR) -M < $(AR_SCRIPT)
+	@rm -f $(AR_SCRIPT)
 
 dynamic: $(DYLIBNAME)
 static: $(STLIBNAME)
@@ -117,7 +127,7 @@ himongo-example-macosx: examples/example-macosx.c adapters/macosx.h $(STLIBNAME)
 
 ifndef AE_DIR
 himongo-example-ae:
-	@echo "Please specify AE_DIR (e.g. <redis repository>/src)"
+	@echo "Please specify AE_DIR (e.g. <mongo repository>/src)"
 	@false
 else
 himongo-example-ae: examples/example-ae.c adapters/ae.h $(STLIBNAME)
@@ -160,10 +170,13 @@ test: himongo-test
 	./himongo-test
 
 check: himongo-test
-	@echo "$$REDIS_TEST_CONFIG" | $(REDIS_SERVER) -
-	$(PRE) ./himongo-test -h 127.0.0.1 -p $(REDIS_PORT) -s /tmp/himongo-test-redis.sock || \
-			( kill `cat /tmp/himongo-test-redis.pid` && false )
-	kill `cat /tmp/himongo-test-redis.pid`
+	@echo "$$MONGO_TEST_CONFIG" | $(MONGO_SERVER) -
+	$(PRE) ./himongo-test -h 127.0.0.1 -p $(MONGO_PORT) -s /tmp/himongo-test-mongo.sock || \
+			( kill `cat /tmp/himongo-test-mongo.pid` && false )
+	kill `cat /tmp/himongo-test-mongo.pid`
+
+temp_test: $(STLIBNAME) temp_test.c
+	$(CC) -o temp_test $(CFLAGS) temp_test.c $(STLIBNAME) -pthread
 
 .c.o:
 	$(CC) -std=c99 -pedantic -c $(REAL_CFLAGS) $<
@@ -188,7 +201,7 @@ $(PKGCONFNAME): himongo.h
 	@echo includedir=$(PREFIX)/$(INCLUDE_PATH) >> $@
 	@echo >> $@
 	@echo Name: himongo >> $@
-	@echo Description: Minimalistic C client library for Redis. >> $@
+	@echo Description: Minimalistic C client library for Mongo. >> $@
 	@echo Version: $(HIMONGO_MAJOR).$(HIMONGO_MINOR).$(HIMONGO_PATCH) >> $@
 	@echo Libs: -L\$${libdir} -lhimongo >> $@
 	@echo Cflags: -I\$${includedir} -D_FILE_OFFSET_BITS=64 >> $@

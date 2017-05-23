@@ -129,43 +129,43 @@ static void test_format_commands(void) {
     test("Format command without interpolation: ");
     len = mongoFormatCommand(&cmd,"SET foo bar");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%s string interpolation: ");
     len = mongoFormatCommand(&cmd,"SET %s %s","foo","bar");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%s and an empty string: ");
     len = mongoFormatCommand(&cmd,"SET %s %s","foo","");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$0\r\n\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(0+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(0+2));
     free(cmd);
 
     test("Format command with an empty string in between proper interpolations: ");
     len = mongoFormatCommand(&cmd,"SET %s %s","","foo");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$0\r\n\r\n$3\r\nfoo\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(0+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(0+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%b string interpolation: ");
     len = mongoFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"b\0r",(size_t)3);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nb\0r\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command with %%b and an empty string: ");
     len = mongoFormatCommand(&cmd,"SET %b %b","foo",(size_t)3,"",(size_t)0);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$0\r\n\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(0+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(0+2));
     free(cmd);
 
     test("Format command with literal %%: ");
     len = mongoFormatCommand(&cmd,"SET %% %%");
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$1\r\n%\r\n$1\r\n%\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(1+2)+4+(1+2));
+              len == 4+4+(3+2)+4+(1+2)+4+(1+2));
     free(cmd);
 
     /* Vararg width depends on the type. These tests make sure that the
@@ -216,13 +216,13 @@ static void test_format_commands(void) {
     test("Format command by passing argc/argv without lengths: ");
     len = mongoFormatCommandArgv(&cmd,argc,argv,NULL);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     free(cmd);
 
     test("Format command by passing argc/argv with lengths: ");
     len = mongoFormatCommandArgv(&cmd,argc,argv,lens);
     test_cond(strncmp(cmd,"*3\r\n$3\r\nSET\r\n$7\r\nfoo\0xxx\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(7+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(7+2)+4+(3+2));
     free(cmd);
 
     sds sds_cmd;
@@ -231,14 +231,14 @@ static void test_format_commands(void) {
     test("Format command into sds by passing argc/argv without lengths: ");
     len = mongoFormatSdsCommandArgv(&sds_cmd,argc,argv,NULL);
     test_cond(strncmp(sds_cmd,"*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(3+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(3+2)+4+(3+2));
     sdsfree(sds_cmd);
 
     sds_cmd = sdsempty();
     test("Format command into sds by passing argc/argv with lengths: ");
     len = mongoFormatSdsCommandArgv(&sds_cmd,argc,argv,lens);
     test_cond(strncmp(sds_cmd,"*3\r\n$3\r\nSET\r\n$7\r\nfoo\0xxx\r\n$3\r\nbar\r\n",len) == 0 &&
-        len == 4+4+(3+2)+4+(7+2)+4+(3+2));
+              len == 4+4+(3+2)+4+(7+2)+4+(3+2));
     sdsfree(sds_cmd);
 }
 
@@ -337,8 +337,8 @@ static void test_reply_reader(void) {
     mongoReaderFeed(reader,(char*)"*0\r\n",4);
     ret = mongoReaderGetReply(reader,&reply);
     test_cond(ret == MONGO_OK &&
-        ((mongoReply*)reply)->type == MONGO_REPLY_ARRAY &&
-        ((mongoReply*)reply)->elements == 0);
+              ((mongoReply*)reply)->type == MONGO_REPLY_ARRAY &&
+              ((mongoReply*)reply)->elements == 0);
     freeReplyObject(reply);
     mongoReaderFree(reader);
 }
@@ -362,19 +362,19 @@ static void test_blocking_connection_errors(void) {
     test("Returns error when host cannot be resolved: ");
     c = mongoConnect((char*)"idontexist.test", 6379);
     test_cond(c->err == MONGO_ERR_OTHER &&
-        (strcmp(c->errstr,"Name or service not known") == 0 ||
-         strcmp(c->errstr,"Can't resolve: idontexist.test") == 0 ||
-         strcmp(c->errstr,"nodename nor servname provided, or not known") == 0 ||
-         strcmp(c->errstr,"No address associated with hostname") == 0 ||
-         strcmp(c->errstr,"Temporary failure in name resolution") == 0 ||
-         strcmp(c->errstr,"hostname nor servname provided, or not known") == 0 ||
-         strcmp(c->errstr,"no address associated with name") == 0));
+              (strcmp(c->errstr,"Name or service not known") == 0 ||
+               strcmp(c->errstr,"Can't resolve: idontexist.test") == 0 ||
+               strcmp(c->errstr,"nodename nor servname provided, or not known") == 0 ||
+               strcmp(c->errstr,"No address associated with hostname") == 0 ||
+               strcmp(c->errstr,"Temporary failure in name resolution") == 0 ||
+               strcmp(c->errstr,"hostname nor servname provided, or not known") == 0 ||
+               strcmp(c->errstr,"no address associated with name") == 0));
     mongoFree(c);
 
     test("Returns error when the port is not open: ");
     c = mongoConnect((char*)"localhost", 1);
     test_cond(c->err == MONGO_ERR_IO &&
-        strcmp(c->errstr,"Connection refused") == 0);
+              strcmp(c->errstr,"Connection refused") == 0);
     mongoFree(c);
 
     test("Returns error when the unix_sock socket path doesn't accept connections: ");
@@ -392,13 +392,13 @@ static void test_blocking_connection(struct config config) {
     test("Is able to deliver commands: ");
     reply = mongoCommand(c,"PING");
     test_cond(reply->type == MONGO_REPLY_STATUS &&
-        strcasecmp(reply->str,"pong") == 0)
+              strcasecmp(reply->str,"pong") == 0)
     freeReplyObject(reply);
 
     test("Is a able to send commands verbatim: ");
     reply = mongoCommand(c,"SET foo bar");
     test_cond (reply->type == MONGO_REPLY_STATUS &&
-        strcasecmp(reply->str,"ok") == 0)
+               strcasecmp(reply->str,"ok") == 0)
     freeReplyObject(reply);
 
     test("%%s String interpolation works: ");
@@ -406,7 +406,7 @@ static void test_blocking_connection(struct config config) {
     freeReplyObject(reply);
     reply = mongoCommand(c,"GET foo");
     test_cond(reply->type == MONGO_REPLY_STRING &&
-        strcmp(reply->str,"hello world") == 0);
+              strcmp(reply->str,"hello world") == 0);
     freeReplyObject(reply);
 
     test("%%b String interpolation works: ");
@@ -414,7 +414,7 @@ static void test_blocking_connection(struct config config) {
     freeReplyObject(reply);
     reply = mongoCommand(c,"GET foo");
     test_cond(reply->type == MONGO_REPLY_STRING &&
-        memcmp(reply->str,"hello\x00world",11) == 0)
+              memcmp(reply->str,"hello\x00world",11) == 0)
 
     test("Binary reply length is correct: ");
     test_cond(reply->len == 11)
@@ -534,7 +534,7 @@ static void test_blocking_io_errors(struct config config) {
         /* > 2.0 returns OK on QUIT and read() should be issued once more
          * to know the descriptor is at EOF. */
         test_cond(strcasecmp(reply->str,"OK") == 0 &&
-            mongoGetReply(c,&_reply) == MONGO_ERR);
+                  mongoGetReply(c,&_reply) == MONGO_ERR);
         freeReplyObject(reply);
     } else {
         test_cond(reply == NULL);
@@ -546,7 +546,7 @@ static void test_blocking_io_errors(struct config config) {
      * issued to find out the socket was closed by the server. In both
      * conditions, the error will be set to EOF. */
     assert(c->err == MONGO_ERR_EOF &&
-        strcmp(c->errstr,"Server closed the connection") == 0);
+           strcmp(c->errstr,"Server closed the connection") == 0);
     mongoFree(c);
 
     c = connect(config);
@@ -554,7 +554,7 @@ static void test_blocking_io_errors(struct config config) {
     struct timeval tv = { 0, 1000 };
     assert(mongoSetTimeout(c,tv) == MONGO_OK);
     test_cond(mongoGetReply(c,&_reply) == MONGO_ERR &&
-        c->err == MONGO_ERR_IO && errno == EAGAIN);
+              c->err == MONGO_ERR_IO && errno == EAGAIN);
     mongoFree(c);
 }
 
@@ -748,13 +748,13 @@ static void test_throughput(struct config config) {
 
 int main(int argc, char **argv) {
     struct config cfg = {
-        .tcp = {
-            .host = "127.0.0.1",
-            .port = 6379
-        },
-        .unix_sock = {
-            .path = "/tmp/mongo.sock"
-        }
+            .tcp = {
+                    .host = "127.0.0.1",
+                    .port = 6379
+            },
+            .unix_sock = {
+                    .path = "/tmp/mongo.sock"
+            }
     };
     int throughput = 1;
     int test_inherit_fd = 1;

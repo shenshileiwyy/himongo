@@ -15,13 +15,6 @@
 #define MONGO_ERR_OOM 5 /* Out of memory */
 #define MONGO_ERR_OTHER 2 /* Everything else... */
 
-#define MONGO_REPLY_STRING 1
-#define MONGO_REPLY_ARRAY 2
-#define MONGO_REPLY_INTEGER 3
-#define MONGO_REPLY_NIL 4
-#define MONGO_REPLY_STATUS 5
-#define MONGO_REPLY_ERROR 6
-
 #define MONGO_READER_MAX_BUF (1024*16)  /* Default max unused reader buffer. */
 
 #ifdef __cplusplus

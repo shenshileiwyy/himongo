@@ -6,432 +6,11 @@
 #include <errno.h>
 #include <ctype.h>
 
+#include "proto.h"
 #include "himongo.h"
 #include "net.h"
 #include "sds.h"
-
-static mongoReply *createReplyObject(int type);
-
-/* Create a reply object */
-static mongoReply *createReplyObject(int type) {
-    mongoReply *r = calloc(1,sizeof(*r));
-
-    if (r == NULL)
-        return NULL;
-
-    r->type = type;
-    return r;
-}
-
-/* Free a reply object */
-void freeReplyObject(void *reply) {
-    mongoReply *r = reply;
-    size_t j;
-
-    if (r == NULL)
-        return;
-
-    switch(r->type) {
-    case MONGO_REPLY_INTEGER:
-        break; /* Nothing to free */
-    case MONGO_REPLY_ARRAY:
-        if (r->element != NULL) {
-            for (j = 0; j < r->elements; j++)
-                if (r->element[j] != NULL)
-                    freeReplyObject(r->element[j]);
-            free(r->element);
-        }
-        break;
-    case MONGO_REPLY_ERROR:
-    case MONGO_REPLY_STATUS:
-    case MONGO_REPLY_STRING:
-        if (r->str != NULL)
-            free(r->str);
-        break;
-    }
-    free(r);
-}
-
-/* Return the number of digits of 'v' when converted to string in radix 10.
- * Implementation borrowed from link in mongo/src/util.c:string2ll(). */
-static uint32_t countDigits(uint64_t v) {
-  uint32_t result = 1;
-  for (;;) {
-    if (v < 10) return result;
-    if (v < 100) return result + 1;
-    if (v < 1000) return result + 2;
-    if (v < 10000) return result + 3;
-    v /= 10000U;
-    result += 4;
-  }
-}
-
-/* Helper that calculates the bulk length given a certain string length. */
-static size_t bulklen(size_t len) {
-    return 1+countDigits(len)+2+len+2;
-}
-
-int mongovFormatCommand(char **target, const char *format, va_list ap) {
-    const char *c = format;
-    char *cmd = NULL; /* final command */
-    int pos; /* position in final command */
-    sds curarg, newarg; /* current argument */
-    int touched = 0; /* was the current argument touched? */
-    char **curargv = NULL, **newargv = NULL;
-    int argc = 0;
-    int totlen = 0;
-    int error_type = 0; /* 0 = no error; -1 = memory error; -2 = format error */
-    int j;
-
-    /* Abort if there is not target to set */
-    if (target == NULL)
-        return -1;
-
-    /* Build the command string accordingly to protocol */
-    curarg = sdsempty();
-    if (curarg == NULL)
-        return -1;
-
-    while(*c != '\0') {
-        if (*c != '%' || c[1] == '\0') {
-            if (*c == ' ') {
-                if (touched) {
-                    newargv = realloc(curargv,sizeof(char*)*(argc+1));
-                    if (newargv == NULL) goto memory_err;
-                    curargv = newargv;
-                    curargv[argc++] = curarg;
-                    totlen += bulklen(sdslen(curarg));
-
-                    /* curarg is put in argv so it can be overwritten. */
-                    curarg = sdsempty();
-                    if (curarg == NULL) goto memory_err;
-                    touched = 0;
-                }
-            } else {
-                newarg = sdscatlen(curarg,c,1);
-                if (newarg == NULL) goto memory_err;
-                curarg = newarg;
-                touched = 1;
-            }
-        } else {
-            char *arg;
-            size_t size;
-
-            /* Set newarg so it can be checked even if it is not touched. */
-            newarg = curarg;
-
-            switch(c[1]) {
-            case 's':
-                arg = va_arg(ap,char*);
-                size = strlen(arg);
-                if (size > 0)
-                    newarg = sdscatlen(curarg,arg,size);
-                break;
-            case 'b':
-                arg = va_arg(ap,char*);
-                size = va_arg(ap,size_t);
-                if (size > 0)
-                    newarg = sdscatlen(curarg,arg,size);
-                break;
-            case '%':
-                newarg = sdscat(curarg,"%");
-                break;
-            default:
-                /* Try to detect printf format */
-                {
-                    static const char intfmts[] = "diouxX";
-                    static const char flags[] = "#0-+ ";
-                    char _format[16];
-                    const char *_p = c+1;
-                    size_t _l = 0;
-                    va_list _cpy;
-
-                    /* Flags */
-                    while (*_p != '\0' && strchr(flags,*_p) != NULL) _p++;
-
-                    /* Field width */
-                    while (*_p != '\0' && isdigit(*_p)) _p++;
-
-                    /* Precision */
-                    if (*_p == '.') {
-                        _p++;
-                        while (*_p != '\0' && isdigit(*_p)) _p++;
-                    }
-
-                    /* Copy va_list before consuming with va_arg */
-                    va_copy(_cpy,ap);
-
-                    /* Integer conversion (without modifiers) */
-                    if (strchr(intfmts,*_p) != NULL) {
-                        va_arg(ap,int);
-                        goto fmt_valid;
-                    }
-
-                    /* Double conversion (without modifiers) */
-                    if (strchr("eEfFgGaA",*_p) != NULL) {
-                        va_arg(ap,double);
-                        goto fmt_valid;
-                    }
-
-                    /* Size: char */
-                    if (_p[0] == 'h' && _p[1] == 'h') {
-                        _p += 2;
-                        if (*_p != '\0' && strchr(intfmts,*_p) != NULL) {
-                            va_arg(ap,int); /* char gets promoted to int */
-                            goto fmt_valid;
-                        }
-                        goto fmt_invalid;
-                    }
-
-                    /* Size: short */
-                    if (_p[0] == 'h') {
-                        _p += 1;
-                        if (*_p != '\0' && strchr(intfmts,*_p) != NULL) {
-                            va_arg(ap,int); /* short gets promoted to int */
-                            goto fmt_valid;
-                        }
-                        goto fmt_invalid;
-                    }
-
-                    /* Size: long long */
-                    if (_p[0] == 'l' && _p[1] == 'l') {
-                        _p += 2;
-                        if (*_p != '\0' && strchr(intfmts,*_p) != NULL) {
-                            va_arg(ap,long long);
-                            goto fmt_valid;
-                        }
-                        goto fmt_invalid;
-                    }
-
-                    /* Size: long */
-                    if (_p[0] == 'l') {
-                        _p += 1;
-                        if (*_p != '\0' && strchr(intfmts,*_p) != NULL) {
-                            va_arg(ap,long);
-                            goto fmt_valid;
-                        }
-                        goto fmt_invalid;
-                    }
-
-                fmt_invalid:
-                    va_end(_cpy);
-                    goto format_err;
-
-                fmt_valid:
-                    _l = (_p+1)-c;
-                    if (_l < sizeof(_format)-2) {
-                        memcpy(_format,c,_l);
-                        _format[_l] = '\0';
-                        newarg = sdscatvprintf(curarg,_format,_cpy);
-
-                        /* Update current position (note: outer blocks
-                         * increment c twice so compensate here) */
-                        c = _p-1;
-                    }
-
-                    va_end(_cpy);
-                    break;
-                }
-            }
-
-            if (newarg == NULL) goto memory_err;
-            curarg = newarg;
-
-            touched = 1;
-            c++;
-        }
-        c++;
-    }
-
-    /* Add the last argument if needed */
-    if (touched) {
-        newargv = realloc(curargv,sizeof(char*)*(argc+1));
-        if (newargv == NULL) goto memory_err;
-        curargv = newargv;
-        curargv[argc++] = curarg;
-        totlen += bulklen(sdslen(curarg));
-    } else {
-        sdsfree(curarg);
-    }
-
-    /* Clear curarg because it was put in curargv or was free'd. */
-    curarg = NULL;
-
-    /* Add bytes needed to hold multi bulk count */
-    totlen += 1+countDigits(argc)+2;
-
-    /* Build the command at protocol level */
-    cmd = malloc(totlen+1);
-    if (cmd == NULL) goto memory_err;
-
-    pos = sprintf(cmd,"*%d\r\n",argc);
-    for (j = 0; j < argc; j++) {
-        pos += sprintf(cmd+pos,"$%zu\r\n",sdslen(curargv[j]));
-        memcpy(cmd+pos,curargv[j],sdslen(curargv[j]));
-        pos += sdslen(curargv[j]);
-        sdsfree(curargv[j]);
-        cmd[pos++] = '\r';
-        cmd[pos++] = '\n';
-    }
-    assert(pos == totlen);
-    cmd[pos] = '\0';
-
-    free(curargv);
-    *target = cmd;
-    return totlen;
-
-format_err:
-    error_type = -2;
-    goto cleanup;
-
-memory_err:
-    error_type = -1;
-    goto cleanup;
-
-cleanup:
-    if (curargv) {
-        while(argc--)
-            sdsfree(curargv[argc]);
-        free(curargv);
-    }
-
-    sdsfree(curarg);
-
-    /* No need to check cmd since it is the last statement that can fail,
-     * but do it anyway to be as defensive as possible. */
-    if (cmd != NULL)
-        free(cmd);
-
-    return error_type;
-}
-
-/* Format a command according to the Mongo protocol. This function
- * takes a format similar to printf:
- *
- * %s represents a C null terminated string you want to interpolate
- * %b represents a binary safe string
- *
- * When using %b you need to provide both the pointer to the string
- * and the length in bytes as a size_t. Examples:
- *
- * len = mongoFormatCommand(target, "GET %s", mykey);
- * len = mongoFormatCommand(target, "SET %s %b", mykey, myval, myvallen);
- */
-int mongoFormatCommand(char **target, const char *format, ...) {
-    va_list ap;
-    int len;
-    va_start(ap,format);
-    len = mongovFormatCommand(target,format,ap);
-    va_end(ap);
-
-    /* The API says "-1" means bad result, but we now also return "-2" in some
-     * cases.  Force the return value to always be -1. */
-    if (len < 0)
-        len = -1;
-
-    return len;
-}
-
-/* Format a command according to the Mongo protocol using an sds string and
- * sdscatfmt for the processing of arguments. This function takes the
- * number of arguments, an array with arguments and an array with their
- * lengths. If the latter is set to NULL, strlen will be used to compute the
- * argument lengths.
- */
-int mongoFormatSdsCommandArgv(sds *target, int argc, const char **argv,
-                              const size_t *argvlen)
-{
-    sds cmd;
-    unsigned long long totlen;
-    int j;
-    size_t len;
-
-    /* Abort on a NULL target */
-    if (target == NULL)
-        return -1;
-
-    /* Calculate our total size */
-    totlen = 1+countDigits(argc)+2;
-    for (j = 0; j < argc; j++) {
-        len = argvlen ? argvlen[j] : strlen(argv[j]);
-        totlen += bulklen(len);
-    }
-
-    /* Use an SDS string for command construction */
-    cmd = sdsempty();
-    if (cmd == NULL)
-        return -1;
-
-    /* We already know how much storage we need */
-    cmd = sdsMakeRoomFor(cmd, totlen);
-    if (cmd == NULL)
-        return -1;
-
-    /* Construct command */
-    cmd = sdscatfmt(cmd, "*%i\r\n", argc);
-    for (j=0; j < argc; j++) {
-        len = argvlen ? argvlen[j] : strlen(argv[j]);
-        cmd = sdscatfmt(cmd, "$%u\r\n", len);
-        cmd = sdscatlen(cmd, argv[j], len);
-        cmd = sdscatlen(cmd, "\r\n", sizeof("\r\n")-1);
-    }
-
-    assert(sdslen(cmd)==totlen);
-
-    *target = cmd;
-    return totlen;
-}
-
-void mongoFreeSdsCommand(sds cmd) {
-    sdsfree(cmd);
-}
-
-/* Format a command according to the Mongo protocol. This function takes the
- * number of arguments, an array with arguments and an array with their
- * lengths. If the latter is set to NULL, strlen will be used to compute the
- * argument lengths.
- */
-int mongoFormatCommandArgv(char **target, int argc, const char **argv, const size_t *argvlen) {
-    char *cmd = NULL; /* final command */
-    int pos; /* position in final command */
-    size_t len;
-    int totlen, j;
-
-    /* Abort on a NULL target */
-    if (target == NULL)
-        return -1;
-
-    /* Calculate number of bytes needed for the command */
-    totlen = 1+countDigits(argc)+2;
-    for (j = 0; j < argc; j++) {
-        len = argvlen ? argvlen[j] : strlen(argv[j]);
-        totlen += bulklen(len);
-    }
-
-    /* Build the command at protocol level */
-    cmd = malloc(totlen+1);
-    if (cmd == NULL)
-        return -1;
-
-    pos = sprintf(cmd,"*%d\r\n",argc);
-    for (j = 0; j < argc; j++) {
-        len = argvlen ? argvlen[j] : strlen(argv[j]);
-        pos += sprintf(cmd+pos,"$%zu\r\n",len);
-        memcpy(cmd+pos,argv[j],len);
-        pos += len;
-        cmd[pos++] = '\r';
-        cmd[pos++] = '\n';
-    }
-    assert(pos == totlen);
-    cmd[pos] = '\0';
-
-    *target = cmd;
-    return totlen;
-}
-
-void mongoFreeCommand(char *cmd) {
-    free(cmd);
-}
+#include "utils.h"
 
 void __mongoSetError(mongoContext *c, int type, const char *str) {
     size_t len;
@@ -447,6 +26,10 @@ void __mongoSetError(mongoContext *c, int type, const char *str) {
         assert(type == MONGO_ERR_IO);
         __mongo_strerror_r(errno, c->errstr, sizeof(c->errstr));
     }
+}
+
+void freeReplyObject(void *reply) {
+    replyMsgFree(reply);
 }
 
 static mongoContext *mongoContextInit(void) {
@@ -764,79 +347,281 @@ int mongoGetReply(mongoContext *c, void **reply) {
  * is used, you need to call mongoGetReply yourself to retrieve
  * the reply (or replies in pub/sub).
  */
-int __mongoAppendCommand(mongoContext *c, const char *cmd, size_t len) {
+int __mongoAppendCommand(mongoContext *c, int32_t opCode, char *m, size_t len) {
     sds newbuf;
-
-    newbuf = sdscatlen(c->obuf,cmd,len);
+    int32_t totallen = (int32_t)(16 + len);
+    //TODO size should be size_t
+    newbuf = sdscatpack(c->obuf, "<iiiim",totallen, ++(c->req_id), 0, opCode, m, len);
     if (newbuf == NULL) {
         __mongoSetError(c,MONGO_ERR_OOM,"Out of memory");
         return MONGO_ERR;
     }
-
     c->obuf = newbuf;
     return MONGO_OK;
 }
-
-int mongoAppendFormattedCommand(mongoContext *c, const char *cmd, size_t len) {
-
-    if (__mongoAppendCommand(c, cmd, len) != MONGO_OK) {
-        return MONGO_ERR;
+/*
+ * struct OP_UPDATE {
+ *     MsgHeader header;             // standard message header
+ *     int32     ZERO;               // 0 - reserved for future use
+ *     cstring   fullCollectionName; // "dbname.collectionname"
+ *     int32     flags;              // bit vector. see below
+ *     document  selector;           // the query to select the document
+ *     document  update;             // specification of the update to perform
+ * }
+ */
+int mongoAppendUpdateCommand(mongoContext *c, char *db, char *col, int32_t flags,
+                             bson_t *selector, bson_t *update)
+{
+    char buf[BUFSIZ];
+    int status;
+    sds s;
+    size_t len = 0;
+    uint8_t *s_data = (uint8_t *)bson_get_data(selector);
+    uint8_t *u_data = (uint8_t *)bson_get_data(update);
+    size_t s_len = selector->len;
+    size_t u_len = update->len;
+    status = snpack(buf, len, BUFSIZ, "<issSimm",
+                    0, db, ".", col, flags,
+                    s_data, s_len, u_data, u_len);
+    if (status < 0) {
+        s = sdsempty();
+        s = sdscatpack(s, "<issSimm",
+                       0, db, ".", col, flags,
+                       s_data, s_len, u_data, u_len);
+        if (s == NULL) {
+            __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+            return MONGO_OK;
+        }
+        status = __mongoAppendCommand(c, OP_UPDATE, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        len = (size_t)status;
+        status = __mongoAppendCommand(c, OP_UPDATE, buf, len);
     }
-
-    return MONGO_OK;
+    return status;
 }
 
-int mongovAppendCommand(mongoContext *c, const char *format, va_list ap) {
-    char *cmd;
-    int len;
+/*
+ * OP_INSERT message format.
+ *
+ * struct {
+ *     MsgHeader header;             // standard message header
+ *     int32     flags;              // bit vector - see below
+ *     cstring   fullCollectionName; // "dbname.collectionname"
+ *     document* documents;          // one or more documents to insert into the collection
+ * }
+ */
+int mongoAppendInsertCommand(mongoContext *c, int32_t flags, char *db, char *col,
+                             bson_t **docs, size_t nr_docs)
+{
+    char buf[BUFSIZ];
+    int status;
+    sds s;
+    size_t len = 0;
+    uint8_t *d_data;
+    size_t d_len;
+    status = snpack(buf, len, BUFSIZ, "<issS",
+                    flags, db, ".", col);
+    assert(status > 0);
+    len = (size_t)status;
 
-    len = mongovFormatCommand(&cmd,format,ap);
-    if (len == -1) {
-        __mongoSetError(c,MONGO_ERR_OOM,"Out of memory");
-        return MONGO_ERR;
-    } else if (len == -2) {
-        __mongoSetError(c,MONGO_ERR_OTHER,"Invalid format string");
-        return MONGO_ERR;
+    for (size_t i = 0; i < nr_docs; ++i) {
+        d_data = (uint8_t *)bson_get_data(docs[i]);
+        d_len = docs[i]->len;
+        status = snpack(buf, len, BUFSIZ-len, "<m", d_data, d_len);
+        if (status < 0) break;
+        len = (size_t)status;
     }
-
-    if (__mongoAppendCommand(c,cmd,len) != MONGO_OK) {
-        free(cmd);
-        return MONGO_ERR;
+    if (status < 0) {
+        s = sdsempty();
+        s = sdscatpack(s, "<issS",
+                       flags, db, ".", col);
+        if (s == NULL) {
+            __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+            return MONGO_OK;
+        }
+        for (size_t i = 0; i < nr_docs; ++i) {
+            d_data = (uint8_t *)bson_get_data(docs[i]);
+            d_len = docs[i]->len;
+            s= sdscatpack(s, "<m", d_data, d_len);
+            if (s == NULL) {
+                __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+                return MONGO_OK;
+            }
+        }
+        status = __mongoAppendCommand(c, OP_INSERT, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        status = __mongoAppendCommand(c, OP_INSERT, buf, len);
     }
-
-    free(cmd);
-    return MONGO_OK;
+    return status;
 }
 
-int mongoAppendCommand(mongoContext *c, const char *format, ...) {
-    va_list ap;
-    int ret;
-
-    va_start(ap,format);
-    ret = mongovAppendCommand(c,format,ap);
-    va_end(ap);
-    return ret;
+/*
+ * struct OP_QUERY {
+ *     MsgHeader header;                 // standard message header
+ *     int32     flags;                  // bit vector of query options.  See below for details.
+ *     cstring   fullCollectionName ;    // "dbname.collectionname"
+ *     int32     numberToSkip;           // number of documents to skip
+ *     int32     numberToReturn;         // number of documents to return
+ *                                       //  in the first OP_REPLY batch
+ *     document  query;                  // query object.  See below for details.
+ *   [ document  returnFieldsSelector; ] // Optional. Selector indicating the fields
+ *                                       //  to return.  See below for details.
+ * }
+ */
+int mongoAppendQueryCommand(mongoContext *c, int32_t flags, char *db, char *col,
+                            int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
+{
+    char buf[BUFSIZ];
+    int status;
+    sds s;
+    size_t len = 0;
+    size_t remain = BUFSIZ;
+    uint8_t *q_data = (uint8_t *)bson_get_data(q);
+    uint8_t *rf_data = rfields? (uint8_t *)bson_get_data(rfields): NULL;
+    size_t q_len = q->len;
+    size_t rf_len = rfields? rfields->len: 0;
+    status = snpack(buf, len, remain, "<issSiimm",
+                    flags, db, ".", col, nrSkip, nrReturn,
+                    q_data, q_len, rf_data, rf_len);
+    if (status < 0) {
+        s = sdsempty();
+        s = sdscatpack(s, "<issSiimm",
+                       flags, db, ".", col, nrSkip, nrReturn,
+                       q_data, q_len, rf_data, rf_len);
+        if (s == NULL) {
+            __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+            return MONGO_OK;
+        }
+        status = __mongoAppendCommand(c, OP_QUERY, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        len = (size_t)status;
+        status = __mongoAppendCommand(c, OP_QUERY, buf, len);
+    }
+    return status;
 }
 
-int mongoAppendCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen) {
-    sds cmd;
-    int len;
-
-    len = mongoFormatSdsCommandArgv(&cmd,argc,argv,argvlen);
-    if (len == -1) {
-        __mongoSetError(c,MONGO_ERR_OOM,"Out of memory");
-        return MONGO_ERR;
+/*
+ * OP_GET_MORE message format
+ *
+ * struct {
+ *     MsgHeader header;             // standard message header
+ *     int32     ZERO;               // 0 - reserved for future use
+ *     cstring   fullCollectionName; // "dbname.collectionname"
+ *     int32     numberToReturn;     // number of documents to return
+ *     int64     cursorID;           // cursorID from the OP_REPLY
+ * }
+ */
+int mongoAppendGetMoreCommand(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID) {
+    char buf[BUFSIZ];
+    int status;
+    sds s;
+    size_t len = 0;
+    size_t remain = BUFSIZ;
+    status = snpack(buf, len, remain, "<issSiq",
+                    0, db, ".", col, nrReturn, cursorID);
+    if (status < 0) {
+        s = sdsempty();
+        s = sdscatpack(s, "<issSiq",
+                       0, db, ".", col, nrReturn, cursorID);
+        if (s == NULL) {
+            __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+            return MONGO_OK;
+        }
+        status = __mongoAppendCommand(c, OP_GET_MORE, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        len = (size_t)status;
+        status = __mongoAppendCommand(c, OP_GET_MORE, buf, len);
     }
-
-    if (__mongoAppendCommand(c,cmd,len) != MONGO_OK) {
-        sdsfree(cmd);
-        return MONGO_ERR;
+    return status;
+}
+/*
+ * OP_DELETE message format
+ *
+ * struct {
+ *     MsgHeader header;             // standard message header
+ *     int32     ZERO;               // 0 - reserved for future use
+ *     cstring   fullCollectionName; // "dbname.collectionname"
+ *     int32     flags;              // bit vector - see below for details.
+ *     document  selector;           // query object.  See below for details.
+ * }
+ */
+int mongoAppendDeleteCommand(mongoContext *c, char *db, char *col, int32_t flags,
+                             bson_t *selector)
+{
+    char buf[BUFSIZ];
+    int status;
+    sds s;
+    size_t len = 0;
+    size_t remain = BUFSIZ;
+    uint8_t *s_data = (uint8_t *)bson_get_data(selector);
+    size_t s_len = selector->len;
+    status = snpack(buf, len, remain, "<issSim",
+                    0, db, ".", col, flags,
+                    s_data, s_len);
+    if (status < 0) {
+        s = sdsempty();
+        s = sdscatpack(s, "<issSim",
+                       0, db, ".", col, flags,
+                       s_data, s_len);
+        if (s == NULL) {
+            __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+            return MONGO_OK;
+        }
+        status = __mongoAppendCommand(c, OP_DELETE, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        len = (size_t)status;
+        status = __mongoAppendCommand(c, OP_DELETE, buf, len);
     }
-
-    sdsfree(cmd);
-    return MONGO_OK;
+    return status;
 }
 
+/*
+ * OP_KILL_CURSORS message format.
+ *
+ * struct {
+ *     MsgHeader header;            // standard message header
+ *     int32     ZERO;              // 0 - reserved for future use
+ *     int32     numberOfCursorIDs; // number of cursorIDs in message
+ *     int64*    cursorIDs;         // sequence of cursorIDs to close
+ * }
+ */
+int mongoAppendKillCursorsCommand(mongoContext *c, int32_t nrID, int64_t *IDs)
+{
+    char buf[BUFSIZ];
+    int status = 0;
+    sds s;
+    size_t len = 0;
+    size_t remain = BUFSIZ;
+    status = snpack(buf, len, remain, "<ii", 0, nrID);
+    assert(status > 0);
+    len = (size_t)status;
+    for (int32_t i = 0; i < nrID; ++i) {
+        status = snpack(buf, BUFSIZ-len, BUFSIZ-len, "<q", IDs[i]);
+        if (status < 0) break;
+        len = (size_t )status;
+    }
+    if (status < 0) {
+        s = sdsempty();
+        for (int32_t i = 0; i < nrID; ++i) {
+            if (i == 0) s = sdscatpack(s, "<iiq", 0, nrID, IDs[i]);
+            else s = sdscatpack(s, "<q", IDs[i]);
+            if (s == NULL) {
+                __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
+                return MONGO_OK;
+            }
+        }
+        status = __mongoAppendCommand(c, OP_KILL_CURSORS, s, sdslen(s));
+        sdsfree(s);
+    } else {
+        status = __mongoAppendCommand(c, OP_KILL_CURSORS, buf, len);
+    }
+    return status;
+}
 /* Helper function for the mongoCommand* family of functions.
  *
  * Write a formatted command to the output buffer. If the given context is
@@ -859,30 +644,102 @@ static void *__mongoBlockForReply(mongoContext *c) {
     return NULL;
 }
 
-void *mongovCommand(mongoContext *c, const char *format, va_list ap) {
-    if (mongovAppendCommand(c,format,ap) != MONGO_OK)
+void *mongoQuery(mongoContext *c, int32_t flags, char *db, char *col,
+                 int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
+{
+    int status = mongoAppendQueryCommand(c, flags, db, col, nrSkip, nrReturn, q, rfields);
+    if (status != MONGO_OK) {
         return NULL;
+    }
     return __mongoBlockForReply(c);
 }
 
-void *mongoCommand(mongoContext *c, const char *format, ...) {
-    va_list ap;
-    void *reply = NULL;
-    va_start(ap,format);
-    reply = mongovCommand(c,format,ap);
-    va_end(ap);
-    return reply;
-}
-
-void *mongoCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen) {
-    if (mongoAppendCommandArgv(c,argc,argv,argvlen) != MONGO_OK)
+void *mongoQueryWithJson(mongoContext *c, int32_t flags, char *db, char *col,
+                         int nrSkip, int nrReturn, char *q_js, char *rf_js)
+{
+    bson_error_t error;
+    bson_t *q, *rf=NULL;
+    void *rpl;
+    q = bson_new_from_json((uint8_t *)q_js, -1, &error);
+    if (!q) {
+        __mongoSetError(c, MONGO_ERR_PROTOCOL, error.message);
         return NULL;
-    return __mongoBlockForReply(c);
+    }
+    if (rf_js) {
+        rf = bson_new_from_json((uint8_t *)rf_js, -1, &error);
+        if (!rf) {
+            __mongoSetError(c, MONGO_ERR_PROTOCOL, error.message);
+            return NULL;
+        }
+    }
+    rpl = mongoQuery(c, flags, db, col, nrSkip, nrReturn, q, rf);
+    bson_destroy(q);
+    if (rf) bson_destroy(rf);
+    return rpl;
 }
 
-void *mongoQuery(mongoContext *c, bson_t *q, bson_t *rfields, int nrSkip, int nrReturn) {
-    char buf[BUFSIZ];
-    size_t remain = BUFSIZ;
-    snprintf(buf, BUFSIZ, "<iiii")
-    return __mongoBlockForReply(c);
+void *mongoFind(mongoContext *c, char *db, char *col, bson_t *q, bson_t* rfield, int32_t nrPerQuery) {
+    return mongoQuery(c, 0, db, col, 0, nrPerQuery, q, rfield);
+}
+
+bson_t *mongoFindOne(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfield) {
+    struct replyMsg *m = mongoQuery(c, 0, db, col, 0, -1, q, rfield);
+    bson_t *b;
+    if (!m || m->numberReturned < 1) {
+        return NULL;
+    }
+    b = m->docs[0];
+    m->docs[0] = NULL;
+    replyMsgFree(m);
+    return b;
+}
+
+void* mongoDbCmd(mongoContext *c, int32_t flags, char *db, bson_t *q) {
+    struct replyMsg *m = mongoQuery(c, flags, db, (char *)"$cmd", 0, 1, q, NULL);
+    return m;
+}
+
+void* mongoDbJsonCmd(mongoContext *c, int flags, char *db, char *q_js) {
+    struct replyMsg *m = mongoQueryWithJson(c, flags, db, (char *)"$cmd", 0, 1, q_js, NULL);
+    return m;
+}
+
+void *mongoListCollections(mongoContext *c, char *db) {
+    void *rpl = mongoDbJsonCmd(c, 0, db, "{\"listCollections\": 1}");
+    return rpl;
+}
+
+void *mongoGetCollectionNames(mongoContext *c, char *db) {
+    char *pptr[4096] = {0};
+    int n = 0;
+    char **namev;
+    char *name;
+    size_t totalsz;
+    struct replyMsg *rpl = mongoDbJsonCmd(c, QUERY_FLAG_EXHAUST, db, "{\"listCollections\": 1}");
+    while (rpl) {
+        bson_iter_t it;
+        if (bson_iter_init(&it, rpl->docs[0]) && bson_iter_find(&it, "name") &&
+            BSON_ITER_HOLDS_UTF8(&it) && (name = bson_iter_utf8(&it, NULL))) {
+            pptr[n++] = strdup(name);
+            // FIXME bigger buffer
+            if (n >= 4096) {
+                break;
+            }
+        }
+        int64_t cid = rpl->cursorID;
+        freeReplyObject(rpl);
+        if (cid == 0) break;
+        rpl = __mongoBlockForReply(c);
+    }
+
+    totalsz = (n+1) * sizeof(void*);
+    namev = malloc(totalsz);
+    memcpy(namev, pptr, n * sizeof(void *));
+    namev[n] = NULL;
+    return namev;
+}
+
+void *mongoDropDatabase(mongoContext *c, char *db) {
+    void *rpl = mongoDbJsonCmd(c, 0, db, "{\"dropDatabase\": 1}");
+    return rpl;
 }

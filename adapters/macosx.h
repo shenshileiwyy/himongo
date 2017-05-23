@@ -3,70 +3,70 @@
 //  Copyright (c) 2015 Dmitry Bakhvalov. All rights reserved.
 //
 
-#ifndef __HIREDIS_MACOSX_H__
-#define __HIREDIS_MACOSX_H__
+#ifndef __HIMONGO_MACOSX_H__
+#define __HIMONGO_MACOSX_H__
 
 #include <CoreFoundation/CoreFoundation.h>
 
-#include "../hiredis.h"
+#include "../himongo.h"
 #include "../async.h"
 
 typedef struct {
-    redisAsyncContext *context;
+    mongoAsyncContext *context;
     CFSocketRef socketRef;
     CFRunLoopSourceRef sourceRef;
-} RedisRunLoop;
+} MongoRunLoop;
 
-static int freeRedisRunLoop(RedisRunLoop* redisRunLoop) {
-    if( redisRunLoop != NULL ) {
-        if( redisRunLoop->sourceRef != NULL ) {
-            CFRunLoopSourceInvalidate(redisRunLoop->sourceRef);
-            CFRelease(redisRunLoop->sourceRef);
+static int freeMongoRunLoop(MongoRunLoop* mongoRunLoop) {
+    if( mongoRunLoop != NULL ) {
+        if( mongoRunLoop->sourceRef != NULL ) {
+            CFRunLoopSourceInvalidate(mongoRunLoop->sourceRef);
+            CFRelease(mongoRunLoop->sourceRef);
         }
-        if( redisRunLoop->socketRef != NULL ) {
-            CFSocketInvalidate(redisRunLoop->socketRef);
-            CFRelease(redisRunLoop->socketRef);
+        if( mongoRunLoop->socketRef != NULL ) {
+            CFSocketInvalidate(mongoRunLoop->socketRef);
+            CFRelease(mongoRunLoop->socketRef);
         }
-        free(redisRunLoop);
+        free(mongoRunLoop);
     }
-    return REDIS_ERR;
+    return MONGO_ERR;
 }
 
-static void redisMacOSAddRead(void *privdata) {
-    RedisRunLoop *redisRunLoop = (RedisRunLoop*)privdata;
-    CFSocketEnableCallBacks(redisRunLoop->socketRef, kCFSocketReadCallBack);
+static void mongoMacOSAddRead(void *privdata) {
+    MongoRunLoop *mongoRunLoop = (MongoRunLoop*)privdata;
+    CFSocketEnableCallBacks(mongoRunLoop->socketRef, kCFSocketReadCallBack);
 }
 
-static void redisMacOSDelRead(void *privdata) {
-    RedisRunLoop *redisRunLoop = (RedisRunLoop*)privdata;
-    CFSocketDisableCallBacks(redisRunLoop->socketRef, kCFSocketReadCallBack);
+static void mongoMacOSDelRead(void *privdata) {
+    MongoRunLoop *mongoRunLoop = (MongoRunLoop*)privdata;
+    CFSocketDisableCallBacks(mongoRunLoop->socketRef, kCFSocketReadCallBack);
 }
 
-static void redisMacOSAddWrite(void *privdata) {
-    RedisRunLoop *redisRunLoop = (RedisRunLoop*)privdata;
-    CFSocketEnableCallBacks(redisRunLoop->socketRef, kCFSocketWriteCallBack);
+static void mongoMacOSAddWrite(void *privdata) {
+    MongoRunLoop *mongoRunLoop = (MongoRunLoop*)privdata;
+    CFSocketEnableCallBacks(mongoRunLoop->socketRef, kCFSocketWriteCallBack);
 }
 
-static void redisMacOSDelWrite(void *privdata) {
-    RedisRunLoop *redisRunLoop = (RedisRunLoop*)privdata;
-    CFSocketDisableCallBacks(redisRunLoop->socketRef, kCFSocketWriteCallBack);
+static void mongoMacOSDelWrite(void *privdata) {
+    MongoRunLoop *mongoRunLoop = (MongoRunLoop*)privdata;
+    CFSocketDisableCallBacks(mongoRunLoop->socketRef, kCFSocketWriteCallBack);
 }
 
-static void redisMacOSCleanup(void *privdata) {
-    RedisRunLoop *redisRunLoop = (RedisRunLoop*)privdata;
-    freeRedisRunLoop(redisRunLoop);
+static void mongoMacOSCleanup(void *privdata) {
+    MongoRunLoop *mongoRunLoop = (MongoRunLoop*)privdata;
+    freeMongoRunLoop(mongoRunLoop);
 }
 
-static void redisMacOSAsyncCallback(CFSocketRef __unused s, CFSocketCallBackType callbackType, CFDataRef __unused address, const void __unused *data, void *info) {
-    redisAsyncContext* context = (redisAsyncContext*) info;
+static void mongoMacOSAsyncCallback(CFSocketRef __unused s, CFSocketCallBackType callbackType, CFDataRef __unused address, const void __unused *data, void *info) {
+    mongoAsyncContext* context = (mongoAsyncContext*) info;
 
     switch (callbackType) {
         case kCFSocketReadCallBack:
-            redisAsyncHandleRead(context);
+            mongoAsyncHandleRead(context);
             break;
 
         case kCFSocketWriteCallBack:
-            redisAsyncHandleWrite(context);
+            mongoAsyncHandleWrite(context);
             break;
 
         default:
@@ -74,41 +74,40 @@ static void redisMacOSAsyncCallback(CFSocketRef __unused s, CFSocketCallBackType
     }
 }
 
-static int redisMacOSAttach(redisAsyncContext *redisAsyncCtx, CFRunLoopRef runLoop) {
-    redisContext *redisCtx = &(redisAsyncCtx->c);
+static int mongoMacOSAttach(mongoAsyncContext *mongoAsyncCtx, CFRunLoopRef runLoop) {
+    mongoContext *mongoCtx = &(mongoAsyncCtx->c);
 
     /* Nothing should be attached when something is already attached */
-    if( redisAsyncCtx->ev.data != NULL ) return REDIS_ERR;
+    if( mongoAsyncCtx->ev.data != NULL ) return MONGO_ERR;
 
-    RedisRunLoop* redisRunLoop = (RedisRunLoop*) calloc(1, sizeof(RedisRunLoop));
-    if( !redisRunLoop ) return REDIS_ERR;
+    MongoRunLoop* mongoRunLoop = (MongoRunLoop*) calloc(1, sizeof(MongoRunLoop));
+    if( !mongoRunLoop ) return MONGO_ERR;
 
-    /* Setup redis stuff */
-    redisRunLoop->context = redisAsyncCtx;
+    /* Setup mongo stuff */
+    mongoRunLoop->context = mongoAsyncCtx;
 
-    redisAsyncCtx->ev.addRead  = redisMacOSAddRead;
-    redisAsyncCtx->ev.delRead  = redisMacOSDelRead;
-    redisAsyncCtx->ev.addWrite = redisMacOSAddWrite;
-    redisAsyncCtx->ev.delWrite = redisMacOSDelWrite;
-    redisAsyncCtx->ev.cleanup  = redisMacOSCleanup;
-    redisAsyncCtx->ev.data     = redisRunLoop;
+    mongoAsyncCtx->ev.addRead  = mongoMacOSAddRead;
+    mongoAsyncCtx->ev.delRead  = mongoMacOSDelRead;
+    mongoAsyncCtx->ev.addWrite = mongoMacOSAddWrite;
+    mongoAsyncCtx->ev.delWrite = mongoMacOSDelWrite;
+    mongoAsyncCtx->ev.cleanup  = mongoMacOSCleanup;
+    mongoAsyncCtx->ev.data     = mongoRunLoop;
 
     /* Initialize and install read/write events */
-    CFSocketContext socketCtx = { 0, redisAsyncCtx, NULL, NULL, NULL };
+    CFSocketContext socketCtx = { 0, mongoAsyncCtx, NULL, NULL, NULL };
 
-    redisRunLoop->socketRef = CFSocketCreateWithNative(NULL, redisCtx->fd,
+    mongoRunLoop->socketRef = CFSocketCreateWithNative(NULL, mongoCtx->fd,
                                                        kCFSocketReadCallBack | kCFSocketWriteCallBack,
-                                                       redisMacOSAsyncCallback,
+                                                       mongoMacOSAsyncCallback,
                                                        &socketCtx);
-    if( !redisRunLoop->socketRef ) return freeRedisRunLoop(redisRunLoop);
+    if( !mongoRunLoop->socketRef ) return freeMongoRunLoop(mongoRunLoop);
 
-    redisRunLoop->sourceRef = CFSocketCreateRunLoopSource(NULL, redisRunLoop->socketRef, 0);
-    if( !redisRunLoop->sourceRef ) return freeRedisRunLoop(redisRunLoop);
+    mongoRunLoop->sourceRef = CFSocketCreateRunLoopSource(NULL, mongoRunLoop->socketRef, 0);
+    if( !mongoRunLoop->sourceRef ) return freeMongoRunLoop(mongoRunLoop);
 
-    CFRunLoopAddSource(runLoop, redisRunLoop->sourceRef, kCFRunLoopDefaultMode);
+    CFRunLoopAddSource(runLoop, mongoRunLoop->sourceRef, kCFRunLoopDefaultMode);
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 
 #endif
-

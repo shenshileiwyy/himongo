@@ -7,8 +7,10 @@
 #include <errno.h>
 #include "async.h"
 #include "net.h"
-#include "dict.c"
+// #include "dict.c"
 #include "sds.h"
+#include "proto.h"
+#include "utils.h"
 
 #define _EL_ADD_READ(ctx) do { \
         if ((ctx)->ev.addRead) (ctx)->ev.addRead((ctx)->ev.data); \
@@ -27,49 +29,7 @@
     } while(0);
 
 /* Forward declaration of function in himongo.c */
-int __mongoAppendCommand(mongoContext *c, const char *cmd, size_t len);
-
-/* Functions managing dictionary of callbacks for pub/sub. */
-static unsigned int callbackHash(const void *key) {
-    return dictGenHashFunction((const unsigned char *)key,
-                               sdslen((const sds)key));
-}
-
-static void *callbackValDup(void *privdata, const void *src) {
-    ((void) privdata);
-    mongoCallback *dup = malloc(sizeof(*dup));
-    memcpy(dup,src,sizeof(*dup));
-    return dup;
-}
-
-static int callbackKeyCompare(void *privdata, const void *key1, const void *key2) {
-    int l1, l2;
-    ((void) privdata);
-
-    l1 = sdslen((const sds)key1);
-    l2 = sdslen((const sds)key2);
-    if (l1 != l2) return 0;
-    return memcmp(key1,key2,l1) == 0;
-}
-
-static void callbackKeyDestructor(void *privdata, void *key) {
-    ((void) privdata);
-    sdsfree((sds)key);
-}
-
-static void callbackValDestructor(void *privdata, void *val) {
-    ((void) privdata);
-    free(val);
-}
-
-static dictType callbackDict = {
-    callbackHash,
-    NULL,
-    callbackValDup,
-    callbackKeyCompare,
-    callbackKeyDestructor,
-    callbackValDestructor
-};
+int __mongoAppendCommand(mongoContext *c, int32_t opCode, const char *cmd, size_t len);
 
 static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
     mongoAsyncContext *ac;
@@ -101,10 +61,6 @@ static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
 
     ac->replies.head = NULL;
     ac->replies.tail = NULL;
-    ac->sub.invalid.head = NULL;
-    ac->sub.invalid.tail = NULL;
-    ac->sub.channels = dictCreate(&callbackDict,NULL);
-    ac->sub.patterns = dictCreate(&callbackDict,NULL);
     return ac;
 }
 
@@ -231,7 +187,7 @@ static int __mongoShiftCallback(mongoCallbackList *list, mongoCallback *target) 
     return MONGO_ERR;
 }
 
-static void __mongoRunCallback(mongoAsyncContext *ac, mongoCallback *cb, mongoReply *reply) {
+static void __mongoRunCallback(mongoAsyncContext *ac, mongoCallback *cb, void *reply) {
     mongoContext *c = &(ac->c);
     if (cb->fn != NULL) {
         c->flags |= MONGO_IN_CALLBACK;
@@ -244,29 +200,10 @@ static void __mongoRunCallback(mongoAsyncContext *ac, mongoCallback *cb, mongoRe
 static void __mongoAsyncFree(mongoAsyncContext *ac) {
     mongoContext *c = &(ac->c);
     mongoCallback cb;
-    dictIterator *it;
-    dictEntry *de;
 
     /* Execute pending callbacks with NULL reply. */
     while (__mongoShiftCallback(&ac->replies,&cb) == MONGO_OK)
         __mongoRunCallback(ac,&cb,NULL);
-
-    /* Execute callbacks for invalid commands */
-    while (__mongoShiftCallback(&ac->sub.invalid,&cb) == MONGO_OK)
-        __mongoRunCallback(ac,&cb,NULL);
-
-    /* Run subscription callbacks callbacks with NULL reply */
-    it = dictGetIterator(ac->sub.channels);
-    while ((de = dictNext(it)) != NULL)
-        __mongoRunCallback(ac,dictGetEntryVal(de),NULL);
-    dictReleaseIterator(it);
-    dictRelease(ac->sub.channels);
-
-    it = dictGetIterator(ac->sub.patterns);
-    while ((de = dictNext(it)) != NULL)
-        __mongoRunCallback(ac,dictGetEntryVal(de),NULL);
-    dictReleaseIterator(it);
-    dictRelease(ac->sub.patterns);
 
     /* Signal event lib to clean up */
     _EL_CLEANUP(ac);
@@ -330,53 +267,6 @@ void mongoAsyncDisconnect(mongoAsyncContext *ac) {
         __mongoAsyncDisconnect(ac);
 }
 
-static int __mongoGetSubscribeCallback(mongoAsyncContext *ac, mongoReply *reply, mongoCallback *dstcb) {
-    mongoContext *c = &(ac->c);
-    dict *callbacks;
-    dictEntry *de;
-    int pvariant;
-    char *stype;
-    sds sname;
-
-    /* Custom reply functions are not supported for pub/sub. This will fail
-     * very hard when they are used... */
-    if (reply->type == MONGO_REPLY_ARRAY) {
-        assert(reply->elements >= 2);
-        assert(reply->element[0]->type == MONGO_REPLY_STRING);
-        stype = reply->element[0]->str;
-        pvariant = (tolower(stype[0]) == 'p') ? 1 : 0;
-
-        if (pvariant)
-            callbacks = ac->sub.patterns;
-        else
-            callbacks = ac->sub.channels;
-
-        /* Locate the right callback */
-        assert(reply->element[1]->type == MONGO_REPLY_STRING);
-        sname = sdsnewlen(reply->element[1]->str,reply->element[1]->len);
-        de = dictFind(callbacks,sname);
-        if (de != NULL) {
-            memcpy(dstcb,dictGetEntryVal(de),sizeof(*dstcb));
-
-            /* If this is an unsubscribe message, remove it. */
-            if (strcasecmp(stype+pvariant,"unsubscribe") == 0) {
-                dictDelete(callbacks,sname);
-
-                /* If this was the last unsubscribe message, revert to
-                 * non-subscribe mode. */
-                assert(reply->element[2]->type == MONGO_REPLY_INTEGER);
-                if (reply->element[2]->integer == 0)
-                    c->flags &= ~MONGO_SUBSCRIBED;
-            }
-        }
-        sdsfree(sname);
-    } else {
-        /* Shift callback for invalid commands. */
-        __mongoShiftCallback(&ac->sub.invalid,dstcb);
-    }
-    return MONGO_OK;
-}
-
 void mongoProcessCallbacks(mongoAsyncContext *ac) {
     mongoContext *c = &(ac->c);
     mongoCallback cb = {NULL, NULL, NULL};
@@ -391,11 +281,6 @@ void mongoProcessCallbacks(mongoAsyncContext *ac) {
                 && ac->replies.head == NULL) {
                 __mongoAsyncDisconnect(ac);
                 return;
-            }
-
-            /* If monitor mode, repush callback */
-            if(c->flags & MONGO_MONITORING) {
-                __mongoPushCallback(&ac->replies,&cb);
             }
 
             /* When the connection is not being disconnected, simply stop
@@ -421,17 +306,13 @@ void mongoProcessCallbacks(mongoAsyncContext *ac) {
              * In this case we also want to close the connection, and have the
              * user wait until the server is ready to take our request.
              */
-            if (((mongoReply*)reply)->type == MONGO_REPLY_ERROR) {
-                c->err = MONGO_ERR_OTHER;
-                snprintf(c->errstr,sizeof(c->errstr),"%s",((mongoReply*)reply)->str);
-                c->reader->fn->freeObject(reply);
-                __mongoAsyncDisconnect(ac);
-                return;
-            }
-            /* No more regular callbacks and no errors, the context *must* be subscribed or monitoring. */
-            assert((c->flags & MONGO_SUBSCRIBED || c->flags & MONGO_MONITORING));
-            if(c->flags & MONGO_SUBSCRIBED)
-                __mongoGetSubscribeCallback(ac,reply,&cb);
+            // if (((mongoReply*)reply)->type == MONGO_REPLY_ERROR) {
+            //     c->err = MONGO_ERR_OTHER;
+            //     snprintf(c->errstr,sizeof(c->errstr),"%s",((mongoReply*)reply)->str);
+            //     c->reader->fn->freeObject(reply);
+            //     __mongoAsyncDisconnect(ac);
+            //     return;
+            // }
         }
 
         if (cb.fn != NULL) {
@@ -530,34 +411,14 @@ void mongoAsyncHandleWrite(mongoAsyncContext *ac) {
     }
 }
 
-/* Sets a pointer to the first argument and its length starting at p. Returns
- * the number of bytes to skip to get to the following argument. */
-static const char *nextArgument(const char *start, const char **str, size_t *len) {
-    const char *p = start;
-    if (p[0] != '$') {
-        p = strchr(p,'$');
-        if (p == NULL) return NULL;
-    }
-
-    *len = (int)strtol(p+1,NULL,10);
-    p = strchr(p,'\r');
-    assert(p);
-    *str = p+2;
-    return p+2+(*len)+2;
-}
-
 /* Helper function for the mongoAsyncCommand* family of functions. Writes a
  * formatted command to the output buffer and registers the provided callback
  * function with the context. */
-static int __mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
+static int __mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                               int32_t opCode, const char *cmd, size_t len)
+{
     mongoContext *c = &(ac->c);
     mongoCallback cb;
-    int pvariant, hasnext;
-    const char *cstr, *astr;
-    size_t clen, alen;
-    const char *p;
-    sds sname;
-    int ret;
 
     /* Don't accept new commands when the connection is about to be closed. */
     if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
@@ -566,49 +427,9 @@ static int __mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void 
     cb.fn = fn;
     cb.privdata = privdata;
 
-    /* Find out which command will be appended. */
-    p = nextArgument(cmd,&cstr,&clen);
-    assert(p != NULL);
-    hasnext = (p[0] == '$');
-    pvariant = (tolower(cstr[0]) == 'p') ? 1 : 0;
-    cstr += pvariant;
-    clen -= pvariant;
+    __mongoPushCallback(&ac->replies,&cb);
 
-    if (hasnext && strncasecmp(cstr,"subscribe\r\n",11) == 0) {
-        c->flags |= MONGO_SUBSCRIBED;
-
-        /* Add every channel/pattern to the list of subscription callbacks. */
-        while ((p = nextArgument(p,&astr,&alen)) != NULL) {
-            sname = sdsnewlen(astr,alen);
-            if (pvariant)
-                ret = dictReplace(ac->sub.patterns,sname,&cb);
-            else
-                ret = dictReplace(ac->sub.channels,sname,&cb);
-
-            if (ret == 0) sdsfree(sname);
-        }
-    } else if (strncasecmp(cstr,"unsubscribe\r\n",13) == 0) {
-        /* It is only useful to call (P)UNSUBSCRIBE when the context is
-         * subscribed to one or more channels or patterns. */
-        if (!(c->flags & MONGO_SUBSCRIBED)) return MONGO_ERR;
-
-        /* (P)UNSUBSCRIBE does not have its own response: every channel or
-         * pattern that is unsubscribed will receive a message. This means we
-         * should not append a callback function for this command. */
-     } else if(strncasecmp(cstr,"monitor\r\n",9) == 0) {
-         /* Set monitor flag and push callback */
-         c->flags |= MONGO_MONITORING;
-         __mongoPushCallback(&ac->replies,&cb);
-    } else {
-        if (c->flags & MONGO_SUBSCRIBED)
-            /* This will likely result in an error reply, but it needs to be
-             * received and passed to the callback. */
-            __mongoPushCallback(&ac->sub.invalid,&cb);
-        else
-            __mongoPushCallback(&ac->replies,&cb);
-    }
-
-    __mongoAppendCommand(c,cmd,len);
+    __mongoAppendCommand(c,opCode, cmd,len);
 
     /* Always schedule a write when the write buffer is non-empty */
     _EL_ADD_WRITE(ac);
@@ -616,41 +437,59 @@ static int __mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void 
     return MONGO_OK;
 }
 
-int mongovAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, va_list ap) {
-    char *cmd;
-    int len;
+int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                    int32_t flags, char *db, char *col, int nrSkip,
+                    int nrReturn, bson_t *q, bson_t *rfields)
+{
     int status;
-    len = mongovFormatCommand(&cmd,format,ap);
+    mongoContext *c = &(ac->c);
+    mongoCallback cb;
 
-    /* We don't want to pass -1 or -2 to future functions as a length. */
-    if (len < 0)
+    /* Don't accept new commands when the connection is about to be closed. */
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    status = mongoAppendQueryCommand(c, flags, db, col, nrSkip, nrReturn, q, rfields);
+    if (status != MONGO_OK) {
         return MONGO_ERR;
+    }
 
-    status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
-    free(cmd);
-    return status;
+    /* Setup callback */
+    cb.fn = fn;
+    cb.privdata = privdata;
+
+    __mongoPushCallback(&ac->replies,&cb);
+
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
 }
 
-int mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, ...) {
-    va_list ap;
+int mongoAsyncQueryWithJson(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                            int32_t flags, char *db, char *col, char *q_js,
+                            char *rf_js, int nrSkip, int nrReturn)
+{
+    bson_error_t error;
+    bson_t *q, *rf=NULL;
     int status;
-    va_start(ap,format);
-    status = mongovAsyncCommand(ac,fn,privdata,format,ap);
-    va_end(ap);
+    q = bson_new_from_json((uint8_t *)q_js, -1, &error);
+    if (!q) {
+        return MONGO_ERR;
+    }
+    if (rf_js) {
+        rf = bson_new_from_json((uint8_t *)rf_js, -1, &error);
+        if (!rf) {
+            return MONGO_ERR;
+        }
+    }
+    status = mongoAsyncQuery(ac, fn, privdata, flags, db, col, nrSkip, nrReturn, q, rf);
+    bson_destroy(q);
+    if (rf) bson_destroy(rf);
     return status;
 }
 
-int mongoAsyncCommandArgv(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, int argc, const char **argv, const size_t *argvlen) {
-    sds cmd;
-    int len;
-    int status;
-    len = mongoFormatSdsCommandArgv(&cmd,argc,argv,argvlen);
-    status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
-    sdsfree(cmd);
-    return status;
-}
-
-int mongoAsyncFormattedCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *cmd, size_t len) {
-    int status = __mongoAsyncCommand(ac,fn,privdata,cmd,len);
+int mongoAsyncListCollections(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db) {
+    bson_t *q = bson_new();
+    int status = mongoAsyncQuery(ac, fn, privdata, 0, db, (char *)"system.namespaces", 0, -1, q, NULL);
+    bson_destroy(q);
     return status;
 }

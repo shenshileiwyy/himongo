@@ -28,43 +28,43 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __HIREDIS_LIBEV_H__
-#define __HIREDIS_LIBEV_H__
+#ifndef __HIMONGO_LIBEV_H__
+#define __HIMONGO_LIBEV_H__
 #include <stdlib.h>
 #include <sys/types.h>
 #include <ev.h>
-#include "../hiredis.h"
+#include "../himongo.h"
 #include "../async.h"
 
-typedef struct redisLibevEvents {
-    redisAsyncContext *context;
+typedef struct mongoLibevEvents {
+    mongoAsyncContext *context;
     struct ev_loop *loop;
     int reading, writing;
     ev_io rev, wev;
-} redisLibevEvents;
+} mongoLibevEvents;
 
-static void redisLibevReadEvent(EV_P_ ev_io *watcher, int revents) {
+static void mongoLibevReadEvent(EV_P_ ev_io *watcher, int revents) {
 #if EV_MULTIPLICITY
     ((void)loop);
 #endif
     ((void)revents);
 
-    redisLibevEvents *e = (redisLibevEvents*)watcher->data;
-    redisAsyncHandleRead(e->context);
+    mongoLibevEvents *e = (mongoLibevEvents*)watcher->data;
+    mongoAsyncHandleRead(e->context);
 }
 
-static void redisLibevWriteEvent(EV_P_ ev_io *watcher, int revents) {
+static void mongoLibevWriteEvent(EV_P_ ev_io *watcher, int revents) {
 #if EV_MULTIPLICITY
     ((void)loop);
 #endif
     ((void)revents);
 
-    redisLibevEvents *e = (redisLibevEvents*)watcher->data;
-    redisAsyncHandleWrite(e->context);
+    mongoLibevEvents *e = (mongoLibevEvents*)watcher->data;
+    mongoAsyncHandleWrite(e->context);
 }
 
-static void redisLibevAddRead(void *privdata) {
-    redisLibevEvents *e = (redisLibevEvents*)privdata;
+static void mongoLibevAddRead(void *privdata) {
+    mongoLibevEvents *e = (mongoLibevEvents*)privdata;
     struct ev_loop *loop = e->loop;
     ((void)loop);
     if (!e->reading) {
@@ -73,8 +73,8 @@ static void redisLibevAddRead(void *privdata) {
     }
 }
 
-static void redisLibevDelRead(void *privdata) {
-    redisLibevEvents *e = (redisLibevEvents*)privdata;
+static void mongoLibevDelRead(void *privdata) {
+    mongoLibevEvents *e = (mongoLibevEvents*)privdata;
     struct ev_loop *loop = e->loop;
     ((void)loop);
     if (e->reading) {
@@ -83,8 +83,8 @@ static void redisLibevDelRead(void *privdata) {
     }
 }
 
-static void redisLibevAddWrite(void *privdata) {
-    redisLibevEvents *e = (redisLibevEvents*)privdata;
+static void mongoLibevAddWrite(void *privdata) {
+    mongoLibevEvents *e = (mongoLibevEvents*)privdata;
     struct ev_loop *loop = e->loop;
     ((void)loop);
     if (!e->writing) {
@@ -93,8 +93,8 @@ static void redisLibevAddWrite(void *privdata) {
     }
 }
 
-static void redisLibevDelWrite(void *privdata) {
-    redisLibevEvents *e = (redisLibevEvents*)privdata;
+static void mongoLibevDelWrite(void *privdata) {
+    mongoLibevEvents *e = (mongoLibevEvents*)privdata;
     struct ev_loop *loop = e->loop;
     ((void)loop);
     if (e->writing) {
@@ -103,23 +103,23 @@ static void redisLibevDelWrite(void *privdata) {
     }
 }
 
-static void redisLibevCleanup(void *privdata) {
-    redisLibevEvents *e = (redisLibevEvents*)privdata;
-    redisLibevDelRead(privdata);
-    redisLibevDelWrite(privdata);
+static void mongoLibevCleanup(void *privdata) {
+    mongoLibevEvents *e = (mongoLibevEvents*)privdata;
+    mongoLibevDelRead(privdata);
+    mongoLibevDelWrite(privdata);
     free(e);
 }
 
-static int redisLibevAttach(EV_P_ redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    redisLibevEvents *e;
+static int mongoLibevAttach(EV_P_ mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    mongoLibevEvents *e;
 
     /* Nothing should be attached when something is already attached */
     if (ac->ev.data != NULL)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* Create container for context and r/w events */
-    e = (redisLibevEvents*)malloc(sizeof(*e));
+    e = (mongoLibevEvents*)malloc(sizeof(*e));
     e->context = ac;
 #if EV_MULTIPLICITY
     e->loop = loop;
@@ -131,17 +131,17 @@ static int redisLibevAttach(EV_P_ redisAsyncContext *ac) {
     e->wev.data = e;
 
     /* Register functions to start/stop listening for events */
-    ac->ev.addRead = redisLibevAddRead;
-    ac->ev.delRead = redisLibevDelRead;
-    ac->ev.addWrite = redisLibevAddWrite;
-    ac->ev.delWrite = redisLibevDelWrite;
-    ac->ev.cleanup = redisLibevCleanup;
+    ac->ev.addRead = mongoLibevAddRead;
+    ac->ev.delRead = mongoLibevDelRead;
+    ac->ev.addWrite = mongoLibevAddWrite;
+    ac->ev.delWrite = mongoLibevDelWrite;
+    ac->ev.cleanup = mongoLibevCleanup;
     ac->ev.data = e;
 
     /* Initialize read/write events */
-    ev_io_init(&e->rev,redisLibevReadEvent,c->fd,EV_READ);
-    ev_io_init(&e->wev,redisLibevWriteEvent,c->fd,EV_WRITE);
-    return REDIS_OK;
+    ev_io_init(&e->rev,mongoLibevReadEvent,c->fd,EV_READ);
+    ev_io_init(&e->wev,mongoLibevWriteEvent,c->fd,EV_WRITE);
+    return MONGO_OK;
 }
 
 #endif

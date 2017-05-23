@@ -28,45 +28,45 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __HIREDIS_AE_H__
-#define __HIREDIS_AE_H__
+#ifndef __HIMONGO_AE_H__
+#define __HIMONGO_AE_H__
 #include <sys/types.h>
 #include <ae.h>
-#include "../hiredis.h"
+#include "../himongo.h"
 #include "../async.h"
 
-typedef struct redisAeEvents {
-    redisAsyncContext *context;
+typedef struct mongoAeEvents {
+    mongoAsyncContext *context;
     aeEventLoop *loop;
     int fd;
     int reading, writing;
-} redisAeEvents;
+} mongoAeEvents;
 
-static void redisAeReadEvent(aeEventLoop *el, int fd, void *privdata, int mask) {
+static void mongoAeReadEvent(aeEventLoop *el, int fd, void *privdata, int mask) {
     ((void)el); ((void)fd); ((void)mask);
 
-    redisAeEvents *e = (redisAeEvents*)privdata;
-    redisAsyncHandleRead(e->context);
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
+    mongoAsyncHandleRead(e->context);
 }
 
-static void redisAeWriteEvent(aeEventLoop *el, int fd, void *privdata, int mask) {
+static void mongoAeWriteEvent(aeEventLoop *el, int fd, void *privdata, int mask) {
     ((void)el); ((void)fd); ((void)mask);
 
-    redisAeEvents *e = (redisAeEvents*)privdata;
-    redisAsyncHandleWrite(e->context);
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
+    mongoAsyncHandleWrite(e->context);
 }
 
-static void redisAeAddRead(void *privdata) {
-    redisAeEvents *e = (redisAeEvents*)privdata;
+static void mongoAeAddRead(void *privdata) {
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
     aeEventLoop *loop = e->loop;
     if (!e->reading) {
         e->reading = 1;
-        aeCreateFileEvent(loop,e->fd,AE_READABLE,redisAeReadEvent,e);
+        aeCreateFileEvent(loop,e->fd,AE_READABLE,mongoAeReadEvent,e);
     }
 }
 
-static void redisAeDelRead(void *privdata) {
-    redisAeEvents *e = (redisAeEvents*)privdata;
+static void mongoAeDelRead(void *privdata) {
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
     aeEventLoop *loop = e->loop;
     if (e->reading) {
         e->reading = 0;
@@ -74,17 +74,17 @@ static void redisAeDelRead(void *privdata) {
     }
 }
 
-static void redisAeAddWrite(void *privdata) {
-    redisAeEvents *e = (redisAeEvents*)privdata;
+static void mongoAeAddWrite(void *privdata) {
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
     aeEventLoop *loop = e->loop;
     if (!e->writing) {
         e->writing = 1;
-        aeCreateFileEvent(loop,e->fd,AE_WRITABLE,redisAeWriteEvent,e);
+        aeCreateFileEvent(loop,e->fd,AE_WRITABLE,mongoAeWriteEvent,e);
     }
 }
 
-static void redisAeDelWrite(void *privdata) {
-    redisAeEvents *e = (redisAeEvents*)privdata;
+static void mongoAeDelWrite(void *privdata) {
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
     aeEventLoop *loop = e->loop;
     if (e->writing) {
         e->writing = 0;
@@ -92,36 +92,36 @@ static void redisAeDelWrite(void *privdata) {
     }
 }
 
-static void redisAeCleanup(void *privdata) {
-    redisAeEvents *e = (redisAeEvents*)privdata;
-    redisAeDelRead(privdata);
-    redisAeDelWrite(privdata);
+static void mongoAeCleanup(void *privdata) {
+    mongoAeEvents *e = (mongoAeEvents*)privdata;
+    mongoAeDelRead(privdata);
+    mongoAeDelWrite(privdata);
     free(e);
 }
 
-static int redisAeAttach(aeEventLoop *loop, redisAsyncContext *ac) {
-    redisContext *c = &(ac->c);
-    redisAeEvents *e;
+static int mongoAeAttach(aeEventLoop *loop, mongoAsyncContext *ac) {
+    mongoContext *c = &(ac->c);
+    mongoAeEvents *e;
 
     /* Nothing should be attached when something is already attached */
     if (ac->ev.data != NULL)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* Create container for context and r/w events */
-    e = (redisAeEvents*)malloc(sizeof(*e));
+    e = (mongoAeEvents*)malloc(sizeof(*e));
     e->context = ac;
     e->loop = loop;
     e->fd = c->fd;
     e->reading = e->writing = 0;
 
     /* Register functions to start/stop listening for events */
-    ac->ev.addRead = redisAeAddRead;
-    ac->ev.delRead = redisAeDelRead;
-    ac->ev.addWrite = redisAeAddWrite;
-    ac->ev.delWrite = redisAeDelWrite;
-    ac->ev.cleanup = redisAeCleanup;
+    ac->ev.addRead = mongoAeAddRead;
+    ac->ev.delRead = mongoAeDelRead;
+    ac->ev.addWrite = mongoAeAddWrite;
+    ac->ev.delWrite = mongoAeDelWrite;
+    ac->ev.cleanup = mongoAeCleanup;
     ac->ev.data = e;
 
-    return REDIS_OK;
+    return MONGO_OK;
 }
 #endif

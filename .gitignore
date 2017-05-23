@@ -5,3 +5,5 @@
 /*.dylib
 /*.a
 /*.pc
+.idea
+cmake-build-debug

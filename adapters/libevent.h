@@ -28,81 +28,81 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __HIREDIS_LIBEVENT_H__
-#define __HIREDIS_LIBEVENT_H__
+#ifndef __HIMONGO_LIBEVENT_H__
+#define __HIMONGO_LIBEVENT_H__
 #include <event2/event.h>
-#include "../hiredis.h"
+#include "../himongo.h"
 #include "../async.h"
 
-typedef struct redisLibeventEvents {
-    redisAsyncContext *context;
+typedef struct mongoLibeventEvents {
+    mongoAsyncContext *context;
     struct event *rev, *wev;
-} redisLibeventEvents;
+} mongoLibeventEvents;
 
-static void redisLibeventReadEvent(int fd, short event, void *arg) {
+static void mongoLibeventReadEvent(int fd, short event, void *arg) {
     ((void)fd); ((void)event);
-    redisLibeventEvents *e = (redisLibeventEvents*)arg;
-    redisAsyncHandleRead(e->context);
+    mongoLibeventEvents *e = (mongoLibeventEvents*)arg;
+    mongoAsyncHandleRead(e->context);
 }
 
-static void redisLibeventWriteEvent(int fd, short event, void *arg) {
+static void mongoLibeventWriteEvent(int fd, short event, void *arg) {
     ((void)fd); ((void)event);
-    redisLibeventEvents *e = (redisLibeventEvents*)arg;
-    redisAsyncHandleWrite(e->context);
+    mongoLibeventEvents *e = (mongoLibeventEvents*)arg;
+    mongoAsyncHandleWrite(e->context);
 }
 
-static void redisLibeventAddRead(void *privdata) {
-    redisLibeventEvents *e = (redisLibeventEvents*)privdata;
+static void mongoLibeventAddRead(void *privdata) {
+    mongoLibeventEvents *e = (mongoLibeventEvents*)privdata;
     event_add(e->rev,NULL);
 }
 
-static void redisLibeventDelRead(void *privdata) {
-    redisLibeventEvents *e = (redisLibeventEvents*)privdata;
+static void mongoLibeventDelRead(void *privdata) {
+    mongoLibeventEvents *e = (mongoLibeventEvents*)privdata;
     event_del(e->rev);
 }
 
-static void redisLibeventAddWrite(void *privdata) {
-    redisLibeventEvents *e = (redisLibeventEvents*)privdata;
+static void mongoLibeventAddWrite(void *privdata) {
+    mongoLibeventEvents *e = (mongoLibeventEvents*)privdata;
     event_add(e->wev,NULL);
 }
 
-static void redisLibeventDelWrite(void *privdata) {
-    redisLibeventEvents *e = (redisLibeventEvents*)privdata;
+static void mongoLibeventDelWrite(void *privdata) {
+    mongoLibeventEvents *e = (mongoLibeventEvents*)privdata;
     event_del(e->wev);
 }
 
-static void redisLibeventCleanup(void *privdata) {
-    redisLibeventEvents *e = (redisLibeventEvents*)privdata;
+static void mongoLibeventCleanup(void *privdata) {
+    mongoLibeventEvents *e = (mongoLibeventEvents*)privdata;
     event_free(e->rev);
     event_free(e->wev);
     free(e);
 }
 
-static int redisLibeventAttach(redisAsyncContext *ac, struct event_base *base) {
-    redisContext *c = &(ac->c);
-    redisLibeventEvents *e;
+static int mongoLibeventAttach(mongoAsyncContext *ac, struct event_base *base) {
+    mongoContext *c = &(ac->c);
+    mongoLibeventEvents *e;
 
     /* Nothing should be attached when something is already attached */
     if (ac->ev.data != NULL)
-        return REDIS_ERR;
+        return MONGO_ERR;
 
     /* Create container for context and r/w events */
-    e = (redisLibeventEvents*)malloc(sizeof(*e));
+    e = (mongoLibeventEvents*)malloc(sizeof(*e));
     e->context = ac;
 
     /* Register functions to start/stop listening for events */
-    ac->ev.addRead = redisLibeventAddRead;
-    ac->ev.delRead = redisLibeventDelRead;
-    ac->ev.addWrite = redisLibeventAddWrite;
-    ac->ev.delWrite = redisLibeventDelWrite;
-    ac->ev.cleanup = redisLibeventCleanup;
+    ac->ev.addRead = mongoLibeventAddRead;
+    ac->ev.delRead = mongoLibeventDelRead;
+    ac->ev.addWrite = mongoLibeventAddWrite;
+    ac->ev.delWrite = mongoLibeventDelWrite;
+    ac->ev.cleanup = mongoLibeventCleanup;
     ac->ev.data = e;
 
     /* Initialize and install read/write events */
-    e->rev = event_new(base, c->fd, EV_READ, redisLibeventReadEvent, e);
-    e->wev = event_new(base, c->fd, EV_WRITE, redisLibeventWriteEvent, e);
+    e->rev = event_new(base, c->fd, EV_READ, mongoLibeventReadEvent, e);
+    e->wev = event_new(base, c->fd, EV_WRITE, mongoLibeventWriteEvent, e);
     event_add(e->rev, NULL);
     event_add(e->wev, NULL);
-    return REDIS_OK;
+    return MONGO_OK;
 }
 #endif

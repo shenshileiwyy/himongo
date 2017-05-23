@@ -1,12 +1,12 @@
 /*-
  * Copyright (C) 2014 Pietro Cerutti <gahr@gahr.ch>
  *
- * Redistribution and use in source and binary forms, with or without
+ * Mongotribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 1. Redistributions of source code must retain the above copyright
+ * 1. Mongotributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
+ * 2. Mongotributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
@@ -23,73 +23,73 @@
  * SUCH DAMAGE.
  */
 
-#ifndef __HIREDIS_QT_H__
-#define __HIREDIS_QT_H__
+#ifndef __HIMONGO_QT_H__
+#define __HIMONGO_QT_H__
 #include <QSocketNotifier>
 #include "../async.h"
 
-static void RedisQtAddRead(void *);
-static void RedisQtDelRead(void *);
-static void RedisQtAddWrite(void *);
-static void RedisQtDelWrite(void *);
-static void RedisQtCleanup(void *);
+static void MongoQtAddRead(void *);
+static void MongoQtDelRead(void *);
+static void MongoQtAddWrite(void *);
+static void MongoQtDelWrite(void *);
+static void MongoQtCleanup(void *);
 
-class RedisQtAdapter : public QObject {
+class MongoQtAdapter : public QObject {
 
     Q_OBJECT
 
     friend
-    void RedisQtAddRead(void * adapter) {
-        RedisQtAdapter * a = static_cast<RedisQtAdapter *>(adapter);
+    void MongoQtAddRead(void * adapter) {
+        MongoQtAdapter * a = static_cast<MongoQtAdapter *>(adapter);
         a->addRead();
     }
 
     friend
-    void RedisQtDelRead(void * adapter) {
-        RedisQtAdapter * a = static_cast<RedisQtAdapter *>(adapter);
+    void MongoQtDelRead(void * adapter) {
+        MongoQtAdapter * a = static_cast<MongoQtAdapter *>(adapter);
         a->delRead();
     }
 
     friend
-    void RedisQtAddWrite(void * adapter) {
-        RedisQtAdapter * a = static_cast<RedisQtAdapter *>(adapter);
+    void MongoQtAddWrite(void * adapter) {
+        MongoQtAdapter * a = static_cast<MongoQtAdapter *>(adapter);
         a->addWrite();
     }
 
     friend
-    void RedisQtDelWrite(void * adapter) {
-        RedisQtAdapter * a = static_cast<RedisQtAdapter *>(adapter);
+    void MongoQtDelWrite(void * adapter) {
+        MongoQtAdapter * a = static_cast<MongoQtAdapter *>(adapter);
         a->delWrite();
     }
 
     friend
-    void RedisQtCleanup(void * adapter) {
-        RedisQtAdapter * a = static_cast<RedisQtAdapter *>(adapter);
+    void MongoQtCleanup(void * adapter) {
+        MongoQtAdapter * a = static_cast<MongoQtAdapter *>(adapter);
         a->cleanup();
     }
 
     public:
-        RedisQtAdapter(QObject * parent = 0)
+        MongoQtAdapter(QObject * parent = 0)
             : QObject(parent), m_ctx(0), m_read(0), m_write(0) { }
 
-        ~RedisQtAdapter() {
+        ~MongoQtAdapter() {
             if (m_ctx != 0) {
                 m_ctx->ev.data = NULL;
             }
         }
 
-        int setContext(redisAsyncContext * ac) {
+        int setContext(mongoAsyncContext * ac) {
             if (ac->ev.data != NULL) {
-                return REDIS_ERR;
+                return MONGO_ERR;
             }
             m_ctx = ac;
             m_ctx->ev.data = this;
-            m_ctx->ev.addRead = RedisQtAddRead;
-            m_ctx->ev.delRead = RedisQtDelRead;
-            m_ctx->ev.addWrite = RedisQtAddWrite;
-            m_ctx->ev.delWrite = RedisQtDelWrite;
-            m_ctx->ev.cleanup = RedisQtCleanup;
-            return REDIS_OK;
+            m_ctx->ev.addRead = MongoQtAddRead;
+            m_ctx->ev.delRead = MongoQtDelRead;
+            m_ctx->ev.addWrite = MongoQtAddWrite;
+            m_ctx->ev.delWrite = MongoQtDelWrite;
+            m_ctx->ev.cleanup = MongoQtCleanup;
+            return MONGO_OK;
         }
 
     private:
@@ -123,13 +123,13 @@ class RedisQtAdapter : public QObject {
         }
 
     private slots:
-        void read() { redisAsyncHandleRead(m_ctx); }
-        void write() { redisAsyncHandleWrite(m_ctx); }
+        void read() { mongoAsyncHandleRead(m_ctx); }
+        void write() { mongoAsyncHandleWrite(m_ctx); }
 
     private:
-        redisAsyncContext * m_ctx;
+        mongoAsyncContext * m_ctx;
         QSocketNotifier * m_read;
         QSocketNotifier * m_write;
 };
 
-#endif /* !__HIREDIS_QT_H__ */
+#endif /* !__HIMONGO_QT_H__ */

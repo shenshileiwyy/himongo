@@ -60,13 +60,6 @@ typedef struct mongoAsyncContext {
 
     /* Regular command callbacks */
     mongoCallbackList replies;
-
-    /* Subscription callbacks */
-    struct {
-        mongoCallbackList invalid;
-        struct dict *channels;
-        struct dict *patterns;
-    } sub;
 } mongoAsyncContext;
 
 /* Functions that proxy to himongo */
@@ -86,10 +79,13 @@ void mongoAsyncHandleWrite(mongoAsyncContext *ac);
 
 /* Command functions for an async context. Write the command to the
  * output buffer and register the provided callback. */
-int mongovAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, va_list ap);
-int mongoAsyncCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *format, ...);
-int mongoAsyncCommandArgv(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, int argc, const char **argv, const size_t *argvlen);
-int mongoAsyncFormattedCommand(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, const char *cmd, size_t len);
+int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                    int32_t flags, char *db, char *col, int nrSkip,
+                    int nrReturn, bson_t *q, bson_t *rfields);
+int mongoAsyncQueryWithJson(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                            int32_t flags, char *db, char *col, char *q_js,
+                            char *rf_js, int nrSkip, int nrReturn);
+int mongoAsyncListCollections(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db);
 
 #ifdef __cplusplus
 }

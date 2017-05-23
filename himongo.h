@@ -5,6 +5,8 @@
 #include <sys/time.h> /* for struct timeval */
 #include <stdint.h> /* uintXX_t, etc */
 #include "sds.h" /* for sds */
+#include "proto.h"
+#include "bson.h"
 
 #define HIMONGO_MAJOR 0
 #define HIMONGO_MINOR 13
@@ -31,12 +33,6 @@
 
 /* Flag that is set when an async callback is executed. */
 #define MONGO_IN_CALLBACK 0x10
-
-/* Flag that is set when the async context has one or more subscriptions. */
-#define MONGO_SUBSCRIBED 0x20
-
-/* Flag that is set when monitor mode is active */
-#define MONGO_MONITORING 0x40
 
 /* Flag that is set when we should set SO_REUSEADDR before calling bind() */
 #define MONGO_REUSEADDR 0x80
@@ -75,28 +71,10 @@
 extern "C" {
 #endif
 
-/* This is the reply object returned by mongoCommand() */
-typedef struct mongoReply {
-    int type; /* MONGO_REPLY_* */
-    long long integer; /* The integer when type is MONGO_REPLY_INTEGER */
-    size_t len; /* Length of string */
-    char *str; /* Used for both MONGO_REPLY_ERROR and MONGO_REPLY_STRING */
-    size_t elements; /* number of elements, for MONGO_REPLY_ARRAY */
-    struct mongoReply **element; /* elements vector for MONGO_REPLY_ARRAY */
-} mongoReply;
-
 mongoReader *mongoReaderCreate(void);
 
 /* Function to free the reply objects himongo returns by default. */
 void freeReplyObject(void *reply);
-
-/* Functions to format a command according to the protocol. */
-int mongovFormatCommand(char **target, const char *format, va_list ap);
-int mongoFormatCommand(char **target, const char *format, ...);
-int mongoFormatCommandArgv(char **target, int argc, const char **argv, const size_t *argvlen);
-int mongoFormatSdsCommandArgv(sds *target, int argc, const char ** argv, const size_t *argvlen);
-void mongoFreeCommand(char *cmd);
-void mongoFreeSdsCommand(sds cmd);
 
 enum mongoConnectionType {
     MONGO_CONN_TCP,
@@ -125,6 +103,9 @@ typedef struct mongoContext {
         char *path;
     } unix_sock;
 
+    char dbname[MONGO_MAX_DBNAME_LEN];
+    char namespace[MONGO_MAX_NS_LEN];
+    int32_t req_id;
 } mongoContext;
 
 mongoContext *mongoConnect(const char *ip, int port);
@@ -157,6 +138,16 @@ int mongoFreeKeepFd(mongoContext *c);
 int mongoBufferRead(mongoContext *c);
 int mongoBufferWrite(mongoContext *c, int *done);
 
+
+int mongoAppendUpdateCommand(mongoContext *c, char *db, char *col, int32_t flags,
+                             bson_t *selector, bson_t *update);
+int mongoAppendInsertCommand(mongoContext *c, int32_t flags, char *db, char *col,
+                             bson_t **docs, size_t nr_docs);
+int mongoAppendQueryCommand(mongoContext *c, int32_t flags, char *db, char *col,
+                            int nrSkip, int nrReturn, bson_t *q, bson_t *rfields);
+int mongoAppendGetMoreCommand(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID);
+int mongoAppendDeleteCommand(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
+int mongoAppendKillCursorsCommand(mongoContext *c, int32_t nrID, int64_t *IDs);
 /* In a blocking context, this function first checks if there are unconsumed
  * replies to return and returns one if so. Otherwise, it flushes the output
  * buffer to the socket and reads until it has a reply. In a non-blocking
@@ -164,24 +155,14 @@ int mongoBufferWrite(mongoContext *c, int *done);
 int mongoGetReply(mongoContext *c, void **reply);
 int mongoGetReplyFromReader(mongoContext *c, void **reply);
 
-/* Write a formatted command to the output buffer. Use these functions in blocking mode
- * to get a pipeline of commands. */
-int mongoAppendFormattedCommand(mongoContext *c, const char *cmd, size_t len);
+void *mongoQuery(mongoContext *c, int32_t flags, char *db, char *col,
+                 int nrSkip, int nrReturn, bson_t *q, bson_t *rfields);
+void *mongoQueryWithJson(mongoContext *c, int32_t flags, char *db, char *col, int nrSkip, int nrReturn, char *q_js,
+                         char *rf_js);
 
-/* Write a command to the output buffer. Use these functions in blocking mode
- * to get a pipeline of commands. */
-int mongovAppendCommand(mongoContext *c, const char *format, va_list ap);
-int mongoAppendCommand(mongoContext *c, const char *format, ...);
-int mongoAppendCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen);
-
-/* Issue a command to Mongo. In a blocking context, it is identical to calling
- * mongoAppendCommand, followed by mongoGetReply. The function will return
- * NULL if there was an error in performing the request, otherwise it will
- * return the reply. In a non-blocking context, it is identical to calling
- * only mongoAppendCommand and will always return NULL. */
-void *mongovCommand(mongoContext *c, const char *format, va_list ap);
-void *mongoCommand(mongoContext *c, const char *format, ...);
-void *mongoCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen);
+void *mongoGetCollectionNames(mongoContext *c, char *db);
+void *mongoListCollections(mongoContext *c, char *db);
+void *mongoDropDatabase(mongoContext *c, char *db);
 
 #ifdef __cplusplus
 }
