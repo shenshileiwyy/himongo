@@ -3,9 +3,11 @@
 # Copyright (C) 2010-2011 Pieter Noordhuis <pcnoordhuis at gmail dot com>
 # This file is released under the BSD license, see the COPYING file
 
-OBJ=net.o himongo.o sds.o async.o read.o endianconv.o
+LIBBSON_STATICLIB := libbson/.libs/libbson.a
+LIBBSON_INC := libbson/src/bson
+OBJ=async.o endianconv.o himongo.o net.o proto.o read.o sds.o utils.o
 EXAMPLES=himongo-example himongo-example-libevent himongo-example-libev himongo-example-glib
-TESTS=himongo-test
+# TESTS=himongo-test
 LIBNAME=libhimongo
 PKGCONFNAME=himongo.pc
 
@@ -24,16 +26,16 @@ INSTALL_LIBRARY_PATH= $(DESTDIR)$(PREFIX)/$(LIBRARY_PATH)
 INSTALL_PKGCONF_PATH= $(INSTALL_LIBRARY_PATH)/$(PKGCONF_PATH)
 
 # redis-server configuration used for testing
-REDIS_PORT=56379
-REDIS_SERVER=redis-server
-define REDIS_TEST_CONFIG
-	daemonize yes
-	pidfile /tmp/himongo-test-redis.pid
-	port $(REDIS_PORT)
-	bind 127.0.0.1
-	unixsocket /tmp/himongo-test-redis.sock
-endef
-export REDIS_TEST_CONFIG
+# REDIS_PORT=56379
+# REDIS_SERVER=redis-server
+# define REDIS_TEST_CONFIG
+# 	daemonize yes
+# 	pidfile /tmp/himongo-test-redis.pid
+# 	port $(REDIS_PORT)
+# 	bind 127.0.0.1
+# 	unixsocket /tmp/himongo-test-redis.sock
+# endef
+# export REDIS_TEST_CONFIG
 
 # Fallback to gcc when $CC is not in $PATH.
 CC:=$(shell sh -c 'type $(CC) >/dev/null 2>/dev/null && echo $(CC) || echo gcc')
@@ -41,6 +43,7 @@ CXX:=$(shell sh -c 'type $(CXX) >/dev/null 2>/dev/null && echo $(CXX) || echo g+
 OPTIMIZATION?=-O3
 WARNINGS=-Wall -W -Wstrict-prototypes -Wwrite-strings
 DEBUG_FLAGS?= -g -ggdb
+CFLAGS += -I$(LIBBSON_INC)
 REAL_CFLAGS=$(OPTIMIZATION) -fPIC $(CFLAGS) $(WARNINGS) $(DEBUG_FLAGS) $(ARCH)
 REAL_LDFLAGS=$(LDFLAGS) $(ARCH)
 
@@ -66,7 +69,8 @@ ifeq ($(uname_S),Darwin)
   DYLIB_MAKE_CMD=$(CC) -shared -Wl,-install_name,$(DYLIB_MINOR_NAME) -o $(DYLIBNAME) $(LDFLAGS)
 endif
 
-all: $(DYLIBNAME) $(STLIBNAME) himongo-test $(PKGCONFNAME)
+all: $(STLIBNAME)
+# all: $(DYLIBNAME) $(STLIBNAME) $(PKGCONFNAME)
 
 # Deps (use make dep to generate this)
 async.o: async.c fmacros.h async.h himongo.h read.h sds.h net.h dict.c dict.h
@@ -77,10 +81,19 @@ read.o: read.c fmacros.h read.h sds.h
 sds.o: sds.c sds.h
 test.o: test.c fmacros.h himongo.h read.h sds.h
 
+$(LIBBSON_STATICLIB): libbson/Makefile
+	cd libbson && make
+
+libbson/Makefile: libbson/autogen.sh
+	cd libbson && ./autogen.sh && ./configure
+
+libbson/autogen.sh:
+	git submodule update --init
+
 $(DYLIBNAME): $(OBJ)
 	$(DYLIB_MAKE_CMD) $(OBJ)
 
-$(STLIBNAME): $(OBJ)
+$(STLIBNAME):  $(LIBBSON_STATICLIB) $(OBJ)
 	$(STLIB_MAKE_CMD) $(OBJ)
 
 dynamic: $(DYLIBNAME)
