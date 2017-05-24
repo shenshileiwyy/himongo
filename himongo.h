@@ -139,15 +139,15 @@ int mongoBufferRead(mongoContext *c);
 int mongoBufferWrite(mongoContext *c, int *done);
 
 
-int mongoAppendUpdateCommand(mongoContext *c, char *db, char *col, int32_t flags,
-                             bson_t *selector, bson_t *update);
-int mongoAppendInsertCommand(mongoContext *c, int32_t flags, char *db, char *col,
-                             bson_t **docs, size_t nr_docs);
-int mongoAppendQueryCommand(mongoContext *c, int32_t flags, char *db, char *col,
-                            int nrSkip, int nrReturn, bson_t *q, bson_t *rfields);
-int mongoAppendGetMoreCommand(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID);
-int mongoAppendDeleteCommand(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
-int mongoAppendKillCursorsCommand(mongoContext *c, int32_t nrID, int64_t *IDs);
+int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
+                         bson_t *selector, bson_t *update);
+int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                         bson_t **docs, size_t nr_docs);
+int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                        int nrSkip, int nrReturn, bson_t *q, bson_t *rfields);
+int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID);
+int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
+int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs);
 /* In a blocking context, this function first checks if there are unconsumed
  * replies to return and returns one if so. Otherwise, it flushes the output
  * buffer to the socket and reads until it has a reply. In a non-blocking

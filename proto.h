@@ -21,27 +21,28 @@
 #define OP_DELETE	2006
 #define OP_KILL_CURSORS	2007
 
-#define INSERT_FLAG_CONT_ON_ERR      (1 << 31)
+#define INSERT_FLAG_CONT_ON_ERR      1
 
-#define UPDATE_FLAG_UPSERT           (1 << 31)
-#define UPDATE_FLAG_MULTIPLE         (1 << 30)
+#define UPDATE_FLAG_UPSERT           1
+#define UPDATE_FLAG_MULTIPLE         (1 << 1)
 
-#define QUERY_FLAG_TAILABLE_CURSOR   (1 << 30)
-#define QUERY_FLAG_SLAVE_OK          (1 << 29)
-#define QUERY_FLAG_OPLOG_REPLAY      (1 << 28)
-#define QUERY_FLAG_NO_CURSOR_TIMEOUT (1 << 27)
-#define QUERY_FLAG_AWAIT_DATA        (1 << 26)
-#define QUERY_FLAG_EXHAUST           (1 << 25)
-#define QUERY_FLAG_PARTIAL           (1 << 24)
-#define QUERY_FLAG_MASK              0xFF000000
+#define QUERY_FLAG_TAILABLE_CURSOR   (1 << 1)
+#define QUERY_FLAG_SLAVE_OK          (1 << 2)
+#define QUERY_FLAG_OPLOG_REPLAY      (1 << 3)
+#define QUERY_FLAG_NO_CURSOR_TIMEOUT (1 << 4)
+#define QUERY_FLAG_AWAIT_DATA        (1 << 5)
+#define QUERY_FLAG_EXHAUST           (1 << 6)
+#define QUERY_FLAG_PARTIAL           (1 << 7)
+#define QUERY_FLAG_MASK              0x000000FF
 
-#define DELETE_FLAG_SINGLE           (1 << 31)
+#define DELETE_FLAG_SINGLE           1
 
-#define REPLY_FLAG_CURSOR_NOT_FOUND  (1 << 31)
-#define REPLY_FLAG_QUERY_FAILURE      (1 << 30)
-#define REPLY_FLAG_SHARD_CONFIG_STALE (1 << 29)
-#define REPLY_FLAG_AWAIT_CAPABLE      (1 << 28)
+#define REPLY_FLAG_CURSOR_NOT_FOUND   1
+#define REPLY_FLAG_QUERY_FAILURE      (1 << 1)
+#define REPLY_FLAG_SHARD_CONFIG_STALE (1 << 2)
+#define REPLY_FLAG_AWAIT_CAPABLE      (1 << 3)
 #define REPLY_FLAG_MASK               0xF0FFFFFF
+
 #define MSG_HEADER                              \
     int32_t messageLength;                      \
     int32_t requestID;                          \

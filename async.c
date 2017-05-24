@@ -7,7 +7,7 @@
 #include <errno.h>
 #include "async.h"
 #include "net.h"
-// #include "dict.c"
+#include "dict.c"
 #include "sds.h"
 #include "proto.h"
 #include "utils.h"
@@ -30,6 +30,49 @@
 
 /* Forward declaration of function in himongo.c */
 int __mongoAppendCommand(mongoContext *c, int32_t opCode, const char *cmd, size_t len);
+/* Functions managing dictionary of callbacks for pub/sub. */
+/* Thomas Wang's 32 bit Mix Function */
+static unsigned int callbackHash(const void *p)
+{
+    unsigned int key = *((unsigned int *)p);
+    key += ~(key << 15);
+    key ^=  (key >> 10);
+    key +=  (key << 3);
+    key ^=  (key >> 6);
+    key += ~(key << 11);
+    key ^=  (key >> 16);
+    return key;
+}
+
+static void *callbackValDup(void *privdata, const void *src) {
+    ((void) privdata);
+    mongoCallback *dup = malloc(sizeof(*dup));
+    memcpy(dup,src,sizeof(*dup));
+    return dup;
+}
+
+static int callbackKeyCompare(void *privdata, const void *key1, const void *key2) {
+    int l1, l2;
+    ((void) privdata);
+
+    l1 = *((int *)key1);
+    l2 = *((int *)key2);
+    return l1 == l2;
+}
+
+static void callbackValDestructor(void *privdata, void *val) {
+    ((void) privdata);
+    free(val);
+}
+
+static dictType callbackDict = {
+        callbackHash,
+        NULL,
+        callbackValDup,
+        callbackKeyCompare,
+        NULL,
+        callbackValDestructor
+};
 
 static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
     mongoAsyncContext *ac;
@@ -447,7 +490,7 @@ int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
 
     /* Don't accept new commands when the connection is about to be closed. */
     if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
-    status = mongoAppendQueryCommand(c, flags, db, col, nrSkip, nrReturn, q, rfields);
+    status = mongoAppendQueryMsg(c, flags, db, col, nrSkip, nrReturn, q, rfields);
     if (status != MONGO_OK) {
         return MONGO_ERR;
     }

@@ -369,8 +369,8 @@ int __mongoAppendCommand(mongoContext *c, int32_t opCode, char *m, size_t len) {
  *     document  update;             // specification of the update to perform
  * }
  */
-int mongoAppendUpdateCommand(mongoContext *c, char *db, char *col, int32_t flags,
-                             bson_t *selector, bson_t *update)
+int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
+                         bson_t *selector, bson_t *update)
 {
     char buf[BUFSIZ];
     int status;
@@ -411,8 +411,8 @@ int mongoAppendUpdateCommand(mongoContext *c, char *db, char *col, int32_t flags
  *     document* documents;          // one or more documents to insert into the collection
  * }
  */
-int mongoAppendInsertCommand(mongoContext *c, int32_t flags, char *db, char *col,
-                             bson_t **docs, size_t nr_docs)
+int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                         bson_t **docs, size_t nr_docs)
 {
     char buf[BUFSIZ];
     int status;
@@ -470,8 +470,8 @@ int mongoAppendInsertCommand(mongoContext *c, int32_t flags, char *db, char *col
  *                                       //  to return.  See below for details.
  * }
  */
-int mongoAppendQueryCommand(mongoContext *c, int32_t flags, char *db, char *col,
-                            int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
+int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                        int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
 {
     char buf[BUFSIZ];
     int status;
@@ -514,7 +514,7 @@ int mongoAppendQueryCommand(mongoContext *c, int32_t flags, char *db, char *col,
  *     int64     cursorID;           // cursorID from the OP_REPLY
  * }
  */
-int mongoAppendGetMoreCommand(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID) {
+int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID) {
     char buf[BUFSIZ];
     int status;
     sds s;
@@ -549,8 +549,8 @@ int mongoAppendGetMoreCommand(mongoContext *c, char *db, char *col, int32_t nrRe
  *     document  selector;           // query object.  See below for details.
  * }
  */
-int mongoAppendDeleteCommand(mongoContext *c, char *db, char *col, int32_t flags,
-                             bson_t *selector)
+int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags,
+                         bson_t *selector)
 {
     char buf[BUFSIZ];
     int status;
@@ -590,7 +590,7 @@ int mongoAppendDeleteCommand(mongoContext *c, char *db, char *col, int32_t flags
  *     int64*    cursorIDs;         // sequence of cursorIDs to close
  * }
  */
-int mongoAppendKillCursorsCommand(mongoContext *c, int32_t nrID, int64_t *IDs)
+int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs)
 {
     char buf[BUFSIZ];
     int status = 0;
@@ -647,7 +647,7 @@ static void *__mongoBlockForReply(mongoContext *c) {
 void *mongoQuery(mongoContext *c, int32_t flags, char *db, char *col,
                  int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
 {
-    int status = mongoAppendQueryCommand(c, flags, db, col, nrSkip, nrReturn, q, rfields);
+    int status = mongoAppendQueryMsg(c, flags, db, col, nrSkip, nrReturn, q, rfields);
     if (status != MONGO_OK) {
         return NULL;
     }
@@ -694,18 +694,18 @@ bson_t *mongoFindOne(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rf
     return b;
 }
 
-void* mongoDbCmd(mongoContext *c, int32_t flags, char *db, bson_t *q) {
-    struct replyMsg *m = mongoQuery(c, flags, db, (char *)"$cmd", 0, 1, q, NULL);
+void* mongoDbCmd(mongoContext *c, int32_t flags, char *db, int32_t nrReturn, bson_t *q) {
+    struct replyMsg *m = mongoQuery(c, flags, db, (char *)"$cmd", 0, nrReturn, q, NULL);
     return m;
 }
 
-void* mongoDbJsonCmd(mongoContext *c, int flags, char *db, char *q_js) {
-    struct replyMsg *m = mongoQueryWithJson(c, flags, db, (char *)"$cmd", 0, 1, q_js, NULL);
+void* mongoDbJsonCmd(mongoContext *c, int flags, char *db, int32_t nrReturn, char *q_js) {
+    struct replyMsg *m = mongoQueryWithJson(c, flags, db, (char *)"$cmd", 0, nrReturn, q_js, NULL);
     return m;
 }
 
 void *mongoListCollections(mongoContext *c, char *db) {
-    void *rpl = mongoDbJsonCmd(c, 0, db, "{\"listCollections\": 1}");
+    void *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"listCollections\": 1}");
     return rpl;
 }
 
@@ -715,11 +715,11 @@ void *mongoGetCollectionNames(mongoContext *c, char *db) {
     char **namev;
     char *name;
     size_t totalsz;
-    struct replyMsg *rpl = mongoDbJsonCmd(c, QUERY_FLAG_EXHAUST, db, "{\"listCollections\": 1}");
+    struct replyMsg *rpl = mongoDbJsonCmd(c, QUERY_FLAG_EXHAUST, db, -1, (char*)"{\"listCollections\": 1}");
     while (rpl) {
         bson_iter_t it;
         if (bson_iter_init(&it, rpl->docs[0]) && bson_iter_find(&it, "name") &&
-            BSON_ITER_HOLDS_UTF8(&it) && (name = bson_iter_utf8(&it, NULL))) {
+            BSON_ITER_HOLDS_UTF8(&it) && (name = (char*)bson_iter_utf8(&it, NULL))) {
             pptr[n++] = strdup(name);
             // FIXME bigger buffer
             if (n >= 4096) {
@@ -739,7 +739,12 @@ void *mongoGetCollectionNames(mongoContext *c, char *db) {
     return namev;
 }
 
+void *mongoGetLastError(mongoContext *c, char *db) {
+    void *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"getlasterror\": 1}");
+    return rpl;
+}
+
 void *mongoDropDatabase(mongoContext *c, char *db) {
-    void *rpl = mongoDbJsonCmd(c, 0, db, "{\"dropDatabase\": 1}");
+    void *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"dropDatabase\": 1}");
     return rpl;
 }
