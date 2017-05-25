@@ -38,12 +38,31 @@ int main(int argc, char *argv[])
             printf("Can't allocate mongo context\n");
         }
     }
+    reply = mongoListCollections(c, (char *)"local");
+    replyMsgToStr(reply, buf, 4096);
+    printf("=============\n%s\n========\n", buf);
+    bson_iter_t it;
+    bson_iter_t it2;
+    char *name;
+    if (!bson_iter_init(&it, reply->docs[0]))
+        printf("init iter error\n");
+    if (!bson_iter_find_descendant(&it, "cursor.firstBatch.0.name", &it2))
+        printf("can't find name field\n");
+    else {
+        if (BSON_ITER_HOLDS_UTF8(&it2) && (name = (char*)bson_iter_utf8(&it2, NULL))) {
+            printf("find name %s\n", name);
+        }
+    }
+
     char **namev = mongoGetCollectionNames(c, (char *)"local");
     pp = namev;
     for (pp=namev; *pp != NULL; ++pp) printf("%s\n", *pp);
 
     reply = mongoDropDatabase(c, (char *)"test");
     replyMsgToStr(reply, buf, 4096);
-    printf("%s", buf);
+    printf("=============\n%s", buf);
+    reply = mongoGetLastError(c, (char *)"test");
+    replyMsgToStr(reply, buf, 4096);
+    printf("=============\n%s", buf);
     return 0;
 }

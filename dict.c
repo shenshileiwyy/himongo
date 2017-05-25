@@ -254,6 +254,12 @@ static dictEntry *dictFind(dict *ht, const void *key) {
     }
     return NULL;
 }
+static void *dictFetchValue(dict *d, const void *key) {
+    dictEntry *he;
+
+    he = dictFind(d,key);
+    return he ? he->val : NULL;
+}
 
 static dictIterator *dictGetIterator(dict *ht) {
     dictIterator *iter = malloc(sizeof(*iter));

@@ -163,6 +163,7 @@ void *mongoQueryWithJson(mongoContext *c, int32_t flags, char *db, char *col, in
 void *mongoGetCollectionNames(mongoContext *c, char *db);
 void *mongoListCollections(mongoContext *c, char *db);
 void *mongoDropDatabase(mongoContext *c, char *db);
+void *mongoGetLastError(mongoContext *c, char *db);
 
 #ifdef __cplusplus
 }

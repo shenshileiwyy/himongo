@@ -13,6 +13,7 @@ struct dict; /* dictionary header is included in async.c */
 typedef void (mongoCallbackFn)(struct mongoAsyncContext*, void*, void*);
 typedef struct mongoCallback {
     struct mongoCallback *next; /* simple singly linked list */
+    int32_t id;
     mongoCallbackFn *fn;
     void *privdata;
 } mongoCallback;
@@ -59,7 +60,7 @@ typedef struct mongoAsyncContext {
     mongoConnectCallback *onConnect;
 
     /* Regular command callbacks */
-    mongoCallbackList replies;
+    struct dict *replies;
 } mongoAsyncContext;
 
 /* Functions that proxy to himongo */
@@ -82,9 +83,9 @@ void mongoAsyncHandleWrite(mongoAsyncContext *ac);
 int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
                     int32_t flags, char *db, char *col, int nrSkip,
                     int nrReturn, bson_t *q, bson_t *rfields);
-int mongoAsyncQueryWithJson(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
-                            int32_t flags, char *db, char *col, char *q_js,
-                            char *rf_js, int nrSkip, int nrReturn);
+int mongoAsyncJsonQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                        int32_t flags, char *db, char *col, char *q_js,
+                        char *rf_js, int nrSkip, int nrReturn);
 int mongoAsyncListCollections(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db);
 
 #ifdef __cplusplus
