@@ -7,3 +7,5 @@
 /*.pc
 .idea
 cmake-build-debug
+sync_test
+async_test

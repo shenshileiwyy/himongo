@@ -175,8 +175,11 @@ check: himongo-test
 			( kill `cat /tmp/himongo-test-mongo.pid` && false )
 	kill `cat /tmp/himongo-test-mongo.pid`
 
-temp_test: $(STLIBNAME) temp_test.c
-	$(CC) -o temp_test $(CFLAGS) temp_test.c $(STLIBNAME) -pthread
+sync_test: $(STLIBNAME) sync_test.c
+	$(CC) -o sync_test $(CFLAGS) sync_test.c $(STLIBNAME) -pthread
+
+async_test: $(STLIBNAME) async_test.c
+	$(CC) -o async_test $(CFLAGS) async_test.c $(STLIBNAME) -pthread
 
 .c.o:
 	$(CC) -std=c99 -pedantic -c $(REAL_CFLAGS) $<

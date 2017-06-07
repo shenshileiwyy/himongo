@@ -7,7 +7,6 @@
 #include <errno.h>
 #include "async.h"
 #include "net.h"
-#include "dict.c"
 #include "sds.h"
 #include "proto.h"
 #include "utils.h"
@@ -28,50 +27,6 @@
         if ((ctx)->ev.cleanup) (ctx)->ev.cleanup((ctx)->ev.data); \
     } while(0);
 
-/* Functions managing dictionary of callbacks for pub/sub. */
-/* Thomas Wang's 32 bit Mix Function */
-static unsigned int callbackHash(const void *p)
-{
-    // use pointer as a integer.
-    unsigned int key = ((unsigned int)p);
-    key += ~(key << 15);
-    key ^=  (key >> 10);
-    key +=  (key << 3);
-    key ^=  (key >> 6);
-    key += ~(key << 11);
-    key ^=  (key >> 16);
-    return key;
-}
-
-static void *callbackValDup(void *privdata, const void *src) {
-    ((void) privdata);
-    mongoCallback *dup = malloc(sizeof(*dup));
-    memcpy(dup,src,sizeof(*dup));
-    return dup;
-}
-
-static int callbackKeyCompare(void *privdata, const void *key1, const void *key2) {
-    int l1, l2;
-    ((void) privdata);
-
-    l1 = ((int)key1);
-    l2 = ((int)key2);
-    return l1 == l2;
-}
-
-static void callbackValDestructor(void *privdata, void *val) {
-    ((void) privdata);
-    free(val);
-}
-
-static dictType callbackDict = {
-        callbackHash,
-        NULL,
-        callbackValDup,
-        callbackKeyCompare,
-        NULL,
-        callbackValDestructor
-};
 
 static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
     mongoAsyncContext *ac;
@@ -101,7 +56,8 @@ static mongoAsyncContext *mongoAsyncInitialize(mongoContext *c) {
     ac->onConnect = NULL;
     ac->onDisconnect = NULL;
 
-    ac->replies = dictCreate(&callbackDict,NULL);
+    ac->replies.head = NULL;
+    ac->replies.tail = NULL;
 
     return ac;
 }
@@ -192,19 +148,43 @@ int mongoAsyncSetDisconnectCallback(mongoAsyncContext *ac, mongoDisconnectCallba
 
 /* Helper functions to push/shift callbacks */
 static int __mongoPushCallback(mongoAsyncContext *ac, mongoCallback *source) {
-    dictAdd(ac->replies, (void *)(source->id), source);
+    mongoCallbackList *list = &ac->replies;
+    mongoCallback *cb;
+
+    /* Copy callback from stack to heap */
+    cb = malloc(sizeof(*cb));
+    if (cb == NULL)
+        return MONGO_ERR_OOM;
+
+    if (source != NULL) {
+        memcpy(cb,source,sizeof(*cb));
+        cb->next = NULL;
+    }
+
+    /* Store callback in list */
+    if (list->head == NULL)
+        list->head = cb;
+    if (list->tail != NULL)
+        list->tail->next = cb;
+    list->tail = cb;
     return MONGO_OK;
 }
 
 static int __mongoShiftCallback(mongoAsyncContext *ac, struct replyMsg *rpl, mongoCallback *target) {
-    mongoCallback *cb = dictFetchValue(ac->replies, (void*)rpl->responseTo);
+    mongoCallbackList *list = &ac->replies;
+    mongoCallback *cb = list->head;
     if (cb != NULL) {
+        // if query with EXHAUST flag and the cursor is not zero, then we don't remove the cb from list.
+        if (!(cb->flags & QUERY_FLAG_EXHAUST && rpl && rpl->cursorID != 0)) {
+            list->head = cb->next;
+            if (cb == list->tail)
+                list->tail = NULL;
+        }
+
         /* Copy callback from heap to stack */
         if (target != NULL)
             memcpy(target,cb,sizeof(*cb));
-        // if cursor is closed, then remove this callback.
-        if (rpl->cursorID == 0)
-            dictDelete(ac->replies, (void*)rpl->responseTo);
+        free(cb);
         return MONGO_OK;
     }
     return MONGO_ERR;
@@ -222,14 +202,11 @@ static void __mongoRunCallback(mongoAsyncContext *ac, mongoCallback *cb, void *r
 /* Helper function to free the context. */
 static void __mongoAsyncFree(mongoAsyncContext *ac) {
     mongoContext *c = &(ac->c);
-    dictIterator *it;
-    dictEntry *de;
+    mongoCallback cb;
 
-    it = dictGetIterator(ac->replies);
-    while ((de = dictNext(it)) != NULL)
-        __mongoRunCallback(ac,dictGetEntryVal(de),NULL);
-    dictReleaseIterator(it);
-    dictRelease(ac->replies);
+    /* Execute pending callbacks with NULL reply. */
+    while (__mongoShiftCallback(ac,NULL,&cb) == MONGO_OK)
+        __mongoRunCallback(ac,&cb,NULL);
 
     /* Signal event lib to clean up */
     _EL_CLEANUP(ac);
@@ -268,7 +245,7 @@ static void __mongoAsyncDisconnect(mongoAsyncContext *ac) {
 
     if (ac->err == 0) {
         /* For clean disconnects, there should be no pending callbacks. */
-        assert(dictSize(ac->replies) == 0);
+        assert(ac->replies.head == NULL);
     } else {
         /* Disconnection is caused by an error, make sure that pending
          * callbacks cannot call new commands. */
@@ -289,13 +266,13 @@ static void __mongoAsyncDisconnect(mongoAsyncContext *ac) {
 void mongoAsyncDisconnect(mongoAsyncContext *ac) {
     mongoContext *c = &(ac->c);
     c->flags |= MONGO_DISCONNECTING;
-    if (!(c->flags & MONGO_IN_CALLBACK) && dictSize(ac->replies) == 0)
+    if (!(c->flags & MONGO_IN_CALLBACK) && ac->replies.head == NULL)
         __mongoAsyncDisconnect(ac);
 }
 
 void mongoProcessCallbacks(mongoAsyncContext *ac) {
     mongoContext *c = &(ac->c);
-    mongoCallback cb = {NULL, NULL, NULL};
+    mongoCallback cb = {NULL, 0, NULL, NULL};
     void *reply = NULL;
     int status;
 
@@ -304,7 +281,7 @@ void mongoProcessCallbacks(mongoAsyncContext *ac) {
             /* When the connection is being disconnected and there are
              * no more replies, this is the cue to really disconnect. */
             if (c->flags & MONGO_DISCONNECTING && sdslen(c->obuf) == 0
-                && dictSize(ac->replies) == 0) {
+                && ac->replies.head == NULL) {
                 __mongoAsyncDisconnect(ac);
                 return;
             }
@@ -453,9 +430,9 @@ int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
     }
 
     /* Setup callback */
-    cb.id = ac->c.req_id + 1;
     cb.fn = fn;
     cb.privdata = privdata;
+    cb.flags = flags;
 
     __mongoPushCallback(ac,&cb);
 
@@ -466,8 +443,8 @@ int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
 }
 
 int mongoAsyncJsonQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
-                        int32_t flags, char *db, char *col, char *q_js,
-                        char *rf_js, int nrSkip, int nrReturn)
+                        int32_t flags, char *db, char *col, int nrSkip, int nrReturn,
+                        char *q_js, char *rf_js)
 {
     bson_error_t error;
     bson_t *q, *rf=NULL;
@@ -488,9 +465,31 @@ int mongoAsyncJsonQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privda
     return status;
 }
 
-int mongoAsyncListCollections(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db) {
-    bson_t *q = bson_new();
-    int status = mongoAsyncQuery(ac, fn, privdata, 0, db, (char *)"system.namespaces", 0, -1, q, NULL);
-    bson_destroy(q);
-    return status;
+int mongoAsyncGetCollectionNames(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db) {
+    return mongoAsyncJsonQuery(ac, fn, privdata, 0, db, (char *)"$cmd", 0, -1,
+                               (char*)"{\"listCollections\": 1}", NULL);
+}
+
+int mongoAsyncFindAll(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                         char *db, char *col, bson_t *q, bson_t *rfield, int32_t nrPerQuery)
+{
+    return mongoAsyncQuery(ac,fn,privdata, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q, rfield);
+}
+
+int mongoAsyncJsonFindAll(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                          char *db, char *col, char *q_js, char *rf_js, int32_t nrPerQuery)
+{
+    return mongoAsyncJsonQuery(ac,fn,privdata, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q_js, rf_js);
+}
+
+int mongoAsyncFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                      char *db, char *col, bson_t *q, bson_t *rfield)
+{
+    return mongoAsyncQuery(ac,fn,privdata, 0, db, col, 0, -1, q, rfield);
+}
+
+int mongoAsyncJsonFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                          char *db, char *col, char *q_js, char *rf_js)
+{
+    return mongoAsyncJsonQuery(ac,fn,privdata, 0, db, col, 0, -1, q_js, rf_js);
 }

@@ -138,7 +138,7 @@ int mongoFreeKeepFd(mongoContext *c);
 int mongoBufferRead(mongoContext *c);
 int mongoBufferWrite(mongoContext *c, int *done);
 
-
+int mongoAppendReqeustRaw(mongoContext *c, int32_t req_id, int32_t opCode, char *m, size_t len);
 int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
                          bson_t *selector, bson_t *update);
 int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
@@ -148,6 +148,8 @@ int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
 int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID);
 int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
 int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs);
+
+int mongoAppendCmdRequst(mongoContext *c, int32_t flags, char *db, char *q_js);
 /* In a blocking context, this function first checks if there are unconsumed
  * replies to return and returns one if so. Otherwise, it flushes the output
  * buffer to the socket and reads until it has a reply. In a non-blocking
@@ -160,11 +162,18 @@ void *mongoQuery(mongoContext *c, int32_t flags, char *db, char *col,
 void *mongoQueryWithJson(mongoContext *c, int32_t flags, char *db, char *col, int nrSkip, int nrReturn, char *q_js,
                          char *rf_js);
 
+void **mongoFindAll(mongoContext *c, char *db, char *col,
+                    bson_t *q, bson_t *rfield, int32_t nrPerQuery);
 void *mongoGetCollectionNames(mongoContext *c, char *db);
 void *mongoListCollections(mongoContext *c, char *db);
 void *mongoDropDatabase(mongoContext *c, char *db);
 void *mongoGetLastError(mongoContext *c, char *db);
 
+
+char *bson_extract_string(bson_t *b, char *k);
+int64_t bson_extract_int64(bson_t *b, char *k);
+int32_t bson_extract_int32(bson_t *b, char *k);
+char **bson_extract_collection_names(bson_t *b);
 #ifdef __cplusplus
 }
 #endif

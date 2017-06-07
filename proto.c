@@ -64,13 +64,13 @@ int replyMsgToStr(struct replyMsg *m, char *buf, size_t len) {
                  m->requestID, m->responseTo, m->opCode,
                  m->responseFlags, m->cursorID, m->startingFrom, m->numberReturned);
     offset += n;
-    for (int32_t i = 0; i < m->numberReturned; ++i) {
-        bson_t *doc = m->docs[i];
-        size_t ll;
-        char *ss = bson_as_json(doc, &ll);
-        n = snprintf(buf+offset, len-offset, "DOC %d\n%s\n\n",i, ss);
-        offset += n;
-        bson_free(ss);
-    }
+    // for (int32_t i = 0; i < m->numberReturned; ++i) {
+    //     bson_t *doc = m->docs[i];
+    //     size_t ll;
+    //     char *ss = bson_as_json(doc, &ll);
+    //     n = snprintf(buf+offset, len-offset, "DOC %d\n%s\n\n",i, ss);
+    //     offset += n;
+    //     bson_free(ss);
+    // }
     return MONGO_OK;
 }

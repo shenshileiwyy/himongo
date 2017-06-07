@@ -84,6 +84,8 @@ struct replyMsg {
     bson_t **docs;
 } replyMsg;
 
+typedef struct replyMsg mongoReply;
+
 struct mongoCursor {
     char *namespace[MONGO_MAX_NS_LEN];
     int32_t numberToReturn;

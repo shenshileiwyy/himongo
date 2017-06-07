@@ -28,6 +28,79 @@ void __mongoSetError(mongoContext *c, int type, const char *str) {
     }
 }
 
+char *bson_extract_string(bson_t *b, char *k) {
+    bson_iter_t it1, it2;
+    char *ss = NULL;
+    if (bson_iter_init(&it1, b) &&
+        bson_iter_find_descendant(&it1, k, &it2) &&
+        BSON_ITER_HOLDS_UTF8(&it2)) {
+        ss = (char *)bson_iter_utf8(&it2, NULL);
+    }
+    return ss;
+}
+
+int64_t bson_extract_int64(bson_t *b, char *k) {
+    bson_iter_t it1, it2;
+    int64_t i = 0;
+    if (bson_iter_init(&it1, b) &&
+        bson_iter_find_descendant(&it1, k, &it2) &&
+        BSON_ITER_HOLDS_INT64(&it2)) {
+        i = bson_iter_int64(&it2);
+    }
+    return i;
+}
+
+int32_t bson_extract_int32(bson_t *b, char *k) {
+    bson_iter_t it1, it2;
+    int64_t i = 0;
+    if (bson_iter_init(&it1, b) &&
+        bson_iter_find_descendant(&it1, k, &it2) &&
+        BSON_ITER_HOLDS_INT32(&it2)) {
+        i = bson_iter_int32(&it2);
+    }
+    return i;
+}
+
+char **bson_extract_collection_names(bson_t *b) {
+    bson_iter_t it1, it2, it3, it4;
+    char *buf[4096];
+    char **pptr = buf;
+    int n = 0;
+    int max_n = 4096;
+    char **namev;
+    char *name;
+    size_t totalsz;
+    if (bson_iter_init(&it1, b) &&
+        bson_iter_find_descendant(&it1, "cursor.firstBatch", &it2) &&
+        BSON_ITER_HOLDS_ARRAY(&it2) && bson_iter_recurse(&it2, &it3)) {
+        while (bson_iter_next (&it3)) {
+            bson_iter_recurse(&it3, &it4);
+            if (bson_iter_find(&it4, "name") && BSON_ITER_HOLDS_UTF8(&it4) &&
+                (name = (char*)bson_iter_utf8(&it4, NULL))) {
+                // check if the buffer is enough
+                if (n >= max_n) {
+                    if (pptr != buf) pptr = realloc(pptr, sizeof(void*)*max_n*2+1);
+                    else {
+                        pptr = malloc(sizeof(void*)*max_n*2+1);
+                        memcpy(pptr, buf, sizeof(buf));
+                    }
+                    max_n *= 2;
+                }
+                pptr[n++] = strdup(name);
+            }
+        }
+    }
+    if (pptr == buf){
+        totalsz = (n+1) * sizeof(void*);
+        namev = malloc(totalsz);
+        memcpy(namev, pptr, n * sizeof(void *));
+    } else {
+        namev = pptr;
+    }
+    namev[n] = NULL;
+    return namev;
+}
+
 void freeReplyObject(void *reply) {
     replyMsgFree(reply);
 }
@@ -341,17 +414,16 @@ int mongoGetReply(mongoContext *c, void **reply) {
 }
 
 
-/* Helper function for the mongoAppendCommand* family of functions.
- *
- * Write a formatted command to the output buffer. When this family
- * is used, you need to call mongoGetReply yourself to retrieve
- * the reply (or replies in pub/sub).
+/*
+ * Write a formatted command to the output buffer.
  */
-int __mongoAppendCommand(mongoContext *c, int32_t opCode, char *m, size_t len) {
+int mongoAppendReqeustRaw(mongoContext *c, int32_t req_id, int32_t opCode, char *m, size_t len) {
     sds newbuf;
     int32_t totallen = (int32_t)(16 + len);
+    if (req_id <= 0) req_id = ++(c->req_id);
+
     //TODO size should be size_t
-    newbuf = sdscatpack(c->obuf, "<iiiim",totallen, ++(c->req_id), 0, opCode, m, len);
+    newbuf = sdscatpack(c->obuf, "<iiiim",totallen, req_id, 0, opCode, m, len);
     if (newbuf == NULL) {
         __mongoSetError(c,MONGO_ERR_OOM,"Out of memory");
         return MONGO_ERR;
@@ -359,6 +431,11 @@ int __mongoAppendCommand(mongoContext *c, int32_t opCode, char *m, size_t len) {
     c->obuf = newbuf;
     return MONGO_OK;
 }
+
+static inline int __mongoAppendReqeust(mongoContext *c, int32_t opCode, char *m, size_t len) {
+    return mongoAppendReqeustRaw(c, ++(c->req_id), opCode, m, len);
+}
+
 /*
  * struct OP_UPDATE {
  *     MsgHeader header;             // standard message header
@@ -392,11 +469,11 @@ int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
         }
-        status = __mongoAppendCommand(c, OP_UPDATE, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_UPDATE, s, sdslen(s));
         sdsfree(s);
     } else {
         len = (size_t)status;
-        status = __mongoAppendCommand(c, OP_UPDATE, buf, len);
+        status = __mongoAppendReqeust(c, OP_UPDATE, buf, len);
     }
     return status;
 }
@@ -449,10 +526,10 @@ int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
                 return MONGO_OK;
             }
         }
-        status = __mongoAppendCommand(c, OP_INSERT, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_INSERT, s, sdslen(s));
         sdsfree(s);
     } else {
-        status = __mongoAppendCommand(c, OP_INSERT, buf, len);
+        status = __mongoAppendReqeust(c, OP_INSERT, buf, len);
     }
     return status;
 }
@@ -473,6 +550,10 @@ int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
 int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
                         int nrSkip, int nrReturn, bson_t *q, bson_t *rfields)
 {
+    bson_t empty;
+    bson_init(&empty);
+    if (!q) q = &empty;
+
     char buf[BUFSIZ];
     int status;
     sds s;
@@ -482,23 +563,35 @@ int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
     uint8_t *rf_data = rfields? (uint8_t *)bson_get_data(rfields): NULL;
     size_t q_len = q->len;
     size_t rf_len = rfields? rfields->len: 0;
-    status = snpack(buf, len, remain, "<issSiimm",
-                    flags, db, ".", col, nrSkip, nrReturn,
-                    q_data, q_len, rf_data, rf_len);
+    if (col == NULL) {
+        status = snpack(buf, len, remain, "<iSiimm",
+                        flags, db, nrSkip, nrReturn,
+                        q_data, q_len, rf_data, rf_len);
+    } else {
+        status = snpack(buf, len, remain, "<issSiimm",
+                        flags, db, ".", col, nrSkip, nrReturn,
+                        q_data, q_len, rf_data, rf_len);
+    }
     if (status < 0) {
         s = sdsempty();
-        s = sdscatpack(s, "<issSiimm",
-                       flags, db, ".", col, nrSkip, nrReturn,
-                       q_data, q_len, rf_data, rf_len);
+        if (col == NULL) {
+            s = sdscatpack(s, "<iSiimm",
+                           flags, db, nrSkip, nrReturn,
+                           q_data, q_len, rf_data, rf_len);
+        } else {
+            s = sdscatpack(s, "<issSiimm",
+                           flags, db, ".", col, nrSkip, nrReturn,
+                           q_data, q_len, rf_data, rf_len);
+        }
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
         }
-        status = __mongoAppendCommand(c, OP_QUERY, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_QUERY, s, sdslen(s));
         sdsfree(s);
     } else {
         len = (size_t)status;
-        status = __mongoAppendCommand(c, OP_QUERY, buf, len);
+        status = __mongoAppendReqeust(c, OP_QUERY, buf, len);
     }
     return status;
 }
@@ -530,14 +623,15 @@ int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
         }
-        status = __mongoAppendCommand(c, OP_GET_MORE, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_GET_MORE, s, sdslen(s));
         sdsfree(s);
     } else {
         len = (size_t)status;
-        status = __mongoAppendCommand(c, OP_GET_MORE, buf, len);
+        status = __mongoAppendReqeust(c, OP_GET_MORE, buf, len);
     }
     return status;
 }
+
 /*
  * OP_DELETE message format
  *
@@ -571,11 +665,11 @@ int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags,
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
         }
-        status = __mongoAppendCommand(c, OP_DELETE, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_DELETE, s, sdslen(s));
         sdsfree(s);
     } else {
         len = (size_t)status;
-        status = __mongoAppendCommand(c, OP_DELETE, buf, len);
+        status = __mongoAppendReqeust(c, OP_DELETE, buf, len);
     }
     return status;
 }
@@ -601,7 +695,7 @@ int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs)
     assert(status > 0);
     len = (size_t)status;
     for (int32_t i = 0; i < nrID; ++i) {
-        status = snpack(buf, BUFSIZ-len, BUFSIZ-len, "<q", IDs[i]);
+        status = snpack(buf, len, BUFSIZ-len, "<q", IDs[i]);
         if (status < 0) break;
         len = (size_t )status;
     }
@@ -615,13 +709,25 @@ int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs)
                 return MONGO_OK;
             }
         }
-        status = __mongoAppendCommand(c, OP_KILL_CURSORS, s, sdslen(s));
+        status = __mongoAppendReqeust(c, OP_KILL_CURSORS, s, sdslen(s));
         sdsfree(s);
     } else {
-        status = __mongoAppendCommand(c, OP_KILL_CURSORS, buf, len);
+        status = __mongoAppendReqeust(c, OP_KILL_CURSORS, buf, len);
     }
     return status;
 }
+
+int mongoAppendCmdRequst(mongoContext *c, int32_t flags, char *db, char *q_js){
+    bson_error_t error;
+    bson_t *q;
+    q = bson_new_from_json((uint8_t *)q_js, -1, &error);
+    if (!q) {
+        __mongoSetError(c, MONGO_ERR_PROTOCOL, error.message);
+        return MONGO_ERR;
+    }
+    return mongoAppendQueryMsg(c, flags, db, (char *)"$cmd", 0, -1, q, NULL);
+}
+
 /* Helper function for the mongoCommand* family of functions.
  *
  * Write a formatted command to the output buffer. If the given context is
@@ -682,16 +788,38 @@ void *mongoFind(mongoContext *c, char *db, char *col, bson_t *q, bson_t* rfield,
     return mongoQuery(c, 0, db, col, 0, nrPerQuery, q, rfield);
 }
 
-bson_t *mongoFindOne(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfield) {
-    struct replyMsg *m = mongoQuery(c, 0, db, col, 0, -1, q, rfield);
-    bson_t *b;
-    if (!m || m->numberReturned < 1) {
-        return NULL;
+void * mongoFindOne(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfield) {
+    return mongoQuery(c, 0, db, col, 0, -1, q, rfield);
+}
+
+void **mongoFindAll(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfield, int32_t nrPerQuery) {
+    void *buf[4096];
+    void **pptr = buf;
+    int n = 0;
+    int max_n = 4096;
+    void **retv;
+
+    struct replyMsg *rpl = mongoQuery(c, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q, rfield);
+    while (rpl->cursorID != 0) {
+        rpl = __mongoBlockForReply(c);
+        if (n >= max_n) {
+            if (pptr != buf) pptr = realloc(pptr, sizeof(void*)*max_n*2);
+            else {
+                pptr = malloc(sizeof(void*)*max_n*2);
+                memcpy(pptr, buf, sizeof(buf));
+            }
+            max_n *= 2;
+        }
+        pptr[n++] = rpl;
     }
-    b = m->docs[0];
-    m->docs[0] = NULL;
-    replyMsgFree(m);
-    return b;
+    pptr[n] = NULL;
+    if (pptr == buf) {
+        retv = malloc(n * sizeof(void*));
+        memcpy(retv, pptr, n);
+    } else {
+        retv = pptr;
+    }
+    return retv;
 }
 
 void* mongoDbCmd(mongoContext *c, int32_t flags, char *db, int32_t nrReturn, bson_t *q) {
@@ -709,33 +837,29 @@ void *mongoListCollections(mongoContext *c, char *db) {
     return rpl;
 }
 
-void *mongoGetCollectionNames(mongoContext *c, char *db) {
-    char *pptr[4096] = {0};
-    int n = 0;
-    char **namev;
-    char *name;
-    size_t totalsz;
-    struct replyMsg *rpl = mongoDbJsonCmd(c, QUERY_FLAG_EXHAUST, db, -1, (char*)"{\"listCollections\": 1}");
-    while (rpl) {
-        bson_iter_t it;
-        if (bson_iter_init(&it, rpl->docs[0]) && bson_iter_find(&it, "name") &&
-            BSON_ITER_HOLDS_UTF8(&it) && (name = (char*)bson_iter_utf8(&it, NULL))) {
-            pptr[n++] = strdup(name);
-            // FIXME bigger buffer
-            if (n >= 4096) {
-                break;
-            }
-        }
-        int64_t cid = rpl->cursorID;
-        freeReplyObject(rpl);
-        if (cid == 0) break;
-        rpl = __mongoBlockForReply(c);
-    }
+void *mongoNextBatch(mongoContext *c, int64_t cursor_id, char *db, char *col) {
+    bson_t *b = BCON_NEW("getMore",
+                         BCON_INT64(cursor_id),
+                         "collection",
+                         BCON_UTF8(col));
+    return mongoQuery(c, 0, db, (char *)"$cmd", 0, -1, b, NULL);
+}
 
-    totalsz = (n+1) * sizeof(void*);
-    namev = malloc(totalsz);
-    memcpy(namev, pptr, n * sizeof(void *));
-    namev[n] = NULL;
+void *mongoGetCollectionNames(mongoContext *c, char *db) {
+    char **namev;
+    char *ns;
+    int64_t cursor_id;
+    struct replyMsg *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"listCollections\": 1}");
+    cursor_id = bson_extract_int64(rpl->docs[0], (char *)"cursor.id");
+    ns = bson_extract_string(rpl->docs[0], (char *)"cursor.ns");
+    namev = bson_extract_collection_names(rpl->docs[0]);
+
+    freeReplyObject(rpl);
+    // while (cursor_id != 0) {
+    //
+    // }
+
+    // printf("cursor_id: %d, ns: %s\n", cursor_id, ns);
     return namev;
 }
 

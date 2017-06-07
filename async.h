@@ -7,13 +7,12 @@ extern "C" {
 #endif
 
 struct mongoAsyncContext; /* need forward declaration of mongoAsyncContext */
-struct dict; /* dictionary header is included in async.c */
 
 /* Reply callback prototype and container */
 typedef void (mongoCallbackFn)(struct mongoAsyncContext*, void*, void*);
 typedef struct mongoCallback {
     struct mongoCallback *next; /* simple singly linked list */
-    int32_t id;
+    int flags;
     mongoCallbackFn *fn;
     void *privdata;
 } mongoCallback;
@@ -60,7 +59,7 @@ typedef struct mongoAsyncContext {
     mongoConnectCallback *onConnect;
 
     /* Regular command callbacks */
-    struct dict *replies;
+    mongoCallbackList replies;
 } mongoAsyncContext;
 
 /* Functions that proxy to himongo */
@@ -84,10 +83,18 @@ int mongoAsyncQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
                     int32_t flags, char *db, char *col, int nrSkip,
                     int nrReturn, bson_t *q, bson_t *rfields);
 int mongoAsyncJsonQuery(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
-                        int32_t flags, char *db, char *col, char *q_js,
-                        char *rf_js, int nrSkip, int nrReturn);
-int mongoAsyncListCollections(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db);
+                        int32_t flags, char *db, char *col, int nrSkip, int nrReturn,
+                        char *q_js, char *rf_js);
+int mongoAsyncGetCollectionNames(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata, char *db);
 
+int mongoAsyncFindAll(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                      char *db, char *col, bson_t *q, bson_t *rfield, int32_t nrPerQuery);
+int mongoAsyncJsonFindAll(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                          char *db, char *col, char *q_js, char *rf_js, int32_t nrPerQuery);
+int mongoAsyncFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                      char *db, char *col, bson_t *q, bson_t *rfield);
+int mongoAsyncJsonFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                          char *db, char *col, char *q_js, char *rf_js);
 #ifdef __cplusplus
 }
 #endif
