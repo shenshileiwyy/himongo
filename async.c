@@ -173,9 +173,11 @@ static int __mongoPushCallback(mongoAsyncContext *ac, mongoCallback *source) {
 static int __mongoShiftCallback(mongoAsyncContext *ac, struct replyMsg *rpl, mongoCallback *target) {
     mongoCallbackList *list = &ac->replies;
     mongoCallback *cb = list->head;
+    // if query with EXHAUST flag and the cursor is not zero, then we don't remove the cb from list.
+    bool no_remove = (cb->flags & QUERY_FLAG_EXHAUST && rpl && rpl->cursorID != 0);
+
     if (cb != NULL) {
-        // if query with EXHAUST flag and the cursor is not zero, then we don't remove the cb from list.
-        if (!(cb->flags & QUERY_FLAG_EXHAUST && rpl && rpl->cursorID != 0)) {
+        if (!no_remove) {
             list->head = cb->next;
             if (cb == list->tail)
                 list->tail = NULL;
@@ -184,7 +186,7 @@ static int __mongoShiftCallback(mongoAsyncContext *ac, struct replyMsg *rpl, mon
         /* Copy callback from heap to stack */
         if (target != NULL)
             memcpy(target,cb,sizeof(*cb));
-        free(cb);
+        if (!no_remove) free(cb);
         return MONGO_OK;
     }
     return MONGO_ERR;

@@ -423,7 +423,7 @@ int mongoAppendReqeustRaw(mongoContext *c, int32_t req_id, int32_t opCode, char 
     if (req_id <= 0) req_id = ++(c->req_id);
 
     //TODO size should be size_t
-    newbuf = sdscatpack(c->obuf, "<iiiim",totallen, req_id, 0, opCode, m, len);
+    newbuf = mongoSdscatpack(c->obuf, "<iiiim", totallen, req_id, 0, opCode, m, len);
     if (newbuf == NULL) {
         __mongoSetError(c,MONGO_ERR_OOM,"Out of memory");
         return MONGO_ERR;
@@ -457,14 +457,14 @@ int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
     uint8_t *u_data = (uint8_t *)bson_get_data(update);
     size_t s_len = selector->len;
     size_t u_len = update->len;
-    status = snpack(buf, len, BUFSIZ, "<issSimm",
-                    0, db, ".", col, flags,
-                    s_data, s_len, u_data, u_len);
+    status = mongoSnpack(buf, len, BUFSIZ, "<issSimm",
+                         0, db, ".", col, flags,
+                         s_data, s_len, u_data, u_len);
     if (status < 0) {
         s = sdsempty();
-        s = sdscatpack(s, "<issSimm",
-                       0, db, ".", col, flags,
-                       s_data, s_len, u_data, u_len);
+        s = mongoSdscatpack(s, "<issSimm",
+                            0, db, ".", col, flags,
+                            s_data, s_len, u_data, u_len);
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
@@ -497,22 +497,22 @@ int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
     size_t len = 0;
     uint8_t *d_data;
     size_t d_len;
-    status = snpack(buf, len, BUFSIZ, "<issS",
-                    flags, db, ".", col);
+    status = mongoSnpack(buf, len, BUFSIZ, "<issS",
+                         flags, db, ".", col);
     assert(status > 0);
     len = (size_t)status;
 
     for (size_t i = 0; i < nr_docs; ++i) {
         d_data = (uint8_t *)bson_get_data(docs[i]);
         d_len = docs[i]->len;
-        status = snpack(buf, len, BUFSIZ-len, "<m", d_data, d_len);
+        status = mongoSnpack(buf, len, BUFSIZ - len, "<m", d_data, d_len);
         if (status < 0) break;
         len = (size_t)status;
     }
     if (status < 0) {
         s = sdsempty();
-        s = sdscatpack(s, "<issS",
-                       flags, db, ".", col);
+        s = mongoSdscatpack(s, "<issS",
+                            flags, db, ".", col);
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
@@ -520,7 +520,7 @@ int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
         for (size_t i = 0; i < nr_docs; ++i) {
             d_data = (uint8_t *)bson_get_data(docs[i]);
             d_len = docs[i]->len;
-            s= sdscatpack(s, "<m", d_data, d_len);
+            s= mongoSdscatpack(s, "<m", d_data, d_len);
             if (s == NULL) {
                 __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
                 return MONGO_OK;
@@ -564,24 +564,24 @@ int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
     size_t q_len = q->len;
     size_t rf_len = rfields? rfields->len: 0;
     if (col == NULL) {
-        status = snpack(buf, len, remain, "<iSiimm",
-                        flags, db, nrSkip, nrReturn,
-                        q_data, q_len, rf_data, rf_len);
+        status = mongoSnpack(buf, len, remain, "<iSiimm",
+                             flags, db, nrSkip, nrReturn,
+                             q_data, q_len, rf_data, rf_len);
     } else {
-        status = snpack(buf, len, remain, "<issSiimm",
-                        flags, db, ".", col, nrSkip, nrReturn,
-                        q_data, q_len, rf_data, rf_len);
+        status = mongoSnpack(buf, len, remain, "<issSiimm",
+                             flags, db, ".", col, nrSkip, nrReturn,
+                             q_data, q_len, rf_data, rf_len);
     }
     if (status < 0) {
         s = sdsempty();
         if (col == NULL) {
-            s = sdscatpack(s, "<iSiimm",
-                           flags, db, nrSkip, nrReturn,
-                           q_data, q_len, rf_data, rf_len);
+            s = mongoSdscatpack(s, "<iSiimm",
+                                flags, db, nrSkip, nrReturn,
+                                q_data, q_len, rf_data, rf_len);
         } else {
-            s = sdscatpack(s, "<issSiimm",
-                           flags, db, ".", col, nrSkip, nrReturn,
-                           q_data, q_len, rf_data, rf_len);
+            s = mongoSdscatpack(s, "<issSiimm",
+                                flags, db, ".", col, nrSkip, nrReturn,
+                                q_data, q_len, rf_data, rf_len);
         }
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
@@ -613,12 +613,12 @@ int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn
     sds s;
     size_t len = 0;
     size_t remain = BUFSIZ;
-    status = snpack(buf, len, remain, "<issSiq",
-                    0, db, ".", col, nrReturn, cursorID);
+    status = mongoSnpack(buf, len, remain, "<issSiq",
+                         0, db, ".", col, nrReturn, cursorID);
     if (status < 0) {
         s = sdsempty();
-        s = sdscatpack(s, "<issSiq",
-                       0, db, ".", col, nrReturn, cursorID);
+        s = mongoSdscatpack(s, "<issSiq",
+                            0, db, ".", col, nrReturn, cursorID);
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
@@ -653,14 +653,14 @@ int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags,
     size_t remain = BUFSIZ;
     uint8_t *s_data = (uint8_t *)bson_get_data(selector);
     size_t s_len = selector->len;
-    status = snpack(buf, len, remain, "<issSim",
-                    0, db, ".", col, flags,
-                    s_data, s_len);
+    status = mongoSnpack(buf, len, remain, "<issSim",
+                         0, db, ".", col, flags,
+                         s_data, s_len);
     if (status < 0) {
         s = sdsempty();
-        s = sdscatpack(s, "<issSim",
-                       0, db, ".", col, flags,
-                       s_data, s_len);
+        s = mongoSdscatpack(s, "<issSim",
+                            0, db, ".", col, flags,
+                            s_data, s_len);
         if (s == NULL) {
             __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
             return MONGO_OK;
@@ -691,19 +691,19 @@ int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs)
     sds s;
     size_t len = 0;
     size_t remain = BUFSIZ;
-    status = snpack(buf, len, remain, "<ii", 0, nrID);
+    status = mongoSnpack(buf, len, remain, "<ii", 0, nrID);
     assert(status > 0);
     len = (size_t)status;
     for (int32_t i = 0; i < nrID; ++i) {
-        status = snpack(buf, len, BUFSIZ-len, "<q", IDs[i]);
+        status = mongoSnpack(buf, len, BUFSIZ - len, "<q", IDs[i]);
         if (status < 0) break;
         len = (size_t )status;
     }
     if (status < 0) {
         s = sdsempty();
         for (int32_t i = 0; i < nrID; ++i) {
-            if (i == 0) s = sdscatpack(s, "<iiq", 0, nrID, IDs[i]);
-            else s = sdscatpack(s, "<q", IDs[i]);
+            if (i == 0) s = mongoSdscatpack(s, "<iiq", 0, nrID, IDs[i]);
+            else s = mongoSdscatpack(s, "<q", IDs[i]);
             if (s == NULL) {
                 __mongoSetError(c, MONGO_ERR_OOM, "Out of memory.");
                 return MONGO_OK;
@@ -793,15 +793,15 @@ void * mongoFindOne(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfi
 }
 
 void **mongoFindAll(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfield, int32_t nrPerQuery) {
-    void *buf[4096];
+    void *buf[4096] = {0};
     void **pptr = buf;
     int n = 0;
     int max_n = 4096;
     void **retv;
+    size_t totalsize;
 
     struct replyMsg *rpl = mongoQuery(c, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q, rfield);
-    while (rpl->cursorID != 0) {
-        rpl = __mongoBlockForReply(c);
+    while(1) {
         if (n >= max_n) {
             if (pptr != buf) pptr = realloc(pptr, sizeof(void*)*max_n*2);
             else {
@@ -811,11 +811,15 @@ void **mongoFindAll(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfi
             max_n *= 2;
         }
         pptr[n++] = rpl;
+        if (rpl->cursorID == 0) break;
+        rpl = __mongoBlockForReply(c);
     }
+
     pptr[n] = NULL;
     if (pptr == buf) {
-        retv = malloc(n * sizeof(void*));
-        memcpy(retv, pptr, n);
+        totalsize = (n+1) * sizeof(void*);
+        retv = malloc(totalsize);
+        memcpy(retv, pptr, totalsize);
     } else {
         retv = pptr;
     }

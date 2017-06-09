@@ -92,7 +92,7 @@ struct mongoCursor {
     int64_t cursorID;
 };
 
-struct replyMsg* replyMsgCreateFromBytes(char *buf, size_t size);
-void replyMsgFree(struct replyMsg *m);
+void * replyMsgCreateFromBytes(char *buf, size_t size);
+void replyMsgFree(void *m);
 int replyMsgToStr(struct replyMsg *m, char *buf, size_t len);
 #endif /* _PROTO_H_ */

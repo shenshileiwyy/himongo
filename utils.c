@@ -11,7 +11,7 @@
 #include "endianconv.h"
 #include "utils.h"
 
-void *memdup(void *s, size_t sz) {
+void *mongoMemdup(void *s, size_t sz) {
     char *p = malloc(sz);
 
     memcpy(p,s,sz);
@@ -40,7 +40,7 @@ void *memdup(void *s, size_t sz) {
  * @param ...
  * @return the new sds object
  */
-sds sdscatpack(sds s, char const *fmt, ...) {
+sds mongoSdscatpack(sds s, char const *fmt, ...) {
     const char *f = fmt;
 
     uint8_t  u8;
@@ -135,7 +135,7 @@ sds sdscatpack(sds s, char const *fmt, ...) {
  * @param ...
  * @return -1 when the buffer size is not enough, otherwise return the size of bytes written to the buffer(the new offset)
  */
-int snpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
+int mongoSnpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
     char *ptr = buf + offset;
     const char *f = fmt;
     size_t remain = size - offset;
@@ -246,7 +246,7 @@ int snpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
     return result;
 }
 
-int snunpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
+int mongoSnunpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
     char *ptr = buf + offset;
     const char *f = fmt;
     size_t remain = size - offset;
@@ -353,7 +353,7 @@ int snunpack(char *buf, size_t offset, size_t size, char const *fmt, ...) {
             mem_len = va_arg(ap, size_t);
             if (remain < mem_len) goto error;
             if (mem_len == 0) break;
-            *ss = memdup(ptr, mem_len);
+            *ss = mongoMemdup(ptr, mem_len);
             ptr += mem_len;
             remain -= mem_len;
             break;
@@ -371,8 +371,10 @@ ok:
     return result;
 }
 
-void freev(void **v) {
+void mongoFreev(void **v) {
+    if (!v) return;
     for (int i = 0; v[i] != NULL; ++i) {
         free(v[i]);
     }
+    free(v);
 }
