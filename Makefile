@@ -4,7 +4,7 @@
 # This file is released under the BSD license, see the COPYING file
 
 LIBBSON_STATICLIB := libbson/.libs/libbson.a
-LIBBSON_INC := libbson/src/bson
+# LIBBSON_INC := libbson/src/bson
 OBJ=async.o endianconv.o himongo.o net.o proto.o read.o sds.o utils.o
 EXAMPLES=himongo-example himongo-example-libevent himongo-example-libev himongo-example-glib
 
@@ -46,7 +46,7 @@ CXX:=$(shell sh -c 'type $(CXX) >/dev/null 2>/dev/null && echo $(CXX) || echo g+
 OPTIMIZATION?=-O3
 WARNINGS=-Wall -W -Wstrict-prototypes -Wwrite-strings
 DEBUG_FLAGS?= -g -ggdb
-CFLAGS += -I$(LIBBSON_INC)
+# CFLAGS += -I$(LIBBSON_INC)
 REAL_CFLAGS=$(OPTIMIZATION) -fPIC $(CFLAGS) $(WARNINGS) $(DEBUG_FLAGS) $(ARCH)
 REAL_LDFLAGS=$(LDFLAGS) $(ARCH)
 
@@ -82,7 +82,6 @@ himongo.o: himongo.c fmacros.h himongo.h read.h sds.h net.h
 net.o: net.c fmacros.h net.h himongo.h read.h sds.h
 read.o: read.c fmacros.h read.h sds.h
 sds.o: sds.c sds.h
-test.o: test.c fmacros.h himongo.h read.h sds.h
 
 $(LIBBSON_STATICLIB): libbson/Makefile
 	cd libbson && make

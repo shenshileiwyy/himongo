@@ -12,7 +12,7 @@ static aeEventLoop *el;
 
 static void reloadAllCallback(mongoAsyncContext *c, void *r, void *privdata) {
     ((void) c); ((void) privdata);
-    struct replyMsg *reply = r;
+    mongoReply *reply = r;
     char **namev;
     char **p;
 
@@ -30,7 +30,7 @@ static void RRSetGetCallback(mongoAsyncContext *c, void *r, void *privdata) {
     char *name, *type, *rdata;
     uint32_t ttl;
 
-    struct replyMsg *reply = r;
+    mongoReply *reply = r;
 
     for (int i = 0; i < reply->numberReturned; ++i) {
         bson_t *b = reply->docs[i];

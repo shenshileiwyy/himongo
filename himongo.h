@@ -6,7 +6,7 @@
 #include <stdint.h> /* uintXX_t, etc */
 #include "sds.h" /* for sds */
 #include "proto.h"
-#include "bson.h"
+#include "libbson/src/bson/bson.h"
 
 #define HIMONGO_MAJOR 0
 #define HIMONGO_MINOR 13
@@ -150,6 +150,7 @@ int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags, bs
 int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs);
 
 int mongoAppendCmdRequst(mongoContext *c, int32_t flags, char *db, char *q_js);
+int mongoAppendGetLastErrorRequest(mongoContext *c, int32_t flags, char *db);
 /* In a blocking context, this function first checks if there are unconsumed
  * replies to return and returns one if so. Otherwise, it flushes the output
  * buffer to the socket and reads until it has a reply. In a non-blocking
@@ -169,6 +170,11 @@ void *mongoListCollections(mongoContext *c, char *db);
 void *mongoDropDatabase(mongoContext *c, char *db);
 void *mongoGetLastError(mongoContext *c, char *db);
 
+void *mongoInsert(mongoContext *c, int32_t flags, char *db, char *col, bson_t *docs, int nr_docs);
+void *mongoUpdate(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector, bson_t *update);
+void *mongoDelete(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
+void *mongoGetMore(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorId);
+void mongoKillCursors(mongoContext *c, int64_t *ids, int nr_id);
 
 char *bson_extract_string(bson_t *b, char *k);
 int64_t bson_extract_int64(bson_t *b, char *k);

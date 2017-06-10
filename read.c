@@ -16,8 +16,8 @@
 /* Default set of functions to build the reply. Keep in mind that such a
  * function returning NULL is interpreted as error. */
 static mongoReplyObjectFunctions defaultFunctions = {
-        replyMsgCreateFromBytes,
-        replyMsgFree
+        mongoReplyCreateFromBytes,
+        mongoReplyFree
 };
 
 static void __mongoReaderSetError(mongoReader *r, int type, const char *str) {

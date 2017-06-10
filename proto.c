@@ -9,13 +9,13 @@
 #include "utils.h"
 #include "read.h"
 
-void * replyMsgCreateFromBytes(char *buf, size_t size) {
+void * mongoReplyCreateFromBytes(char *buf, size_t size) {
     int offset;
     int num = 0;
     bson_t *bs;
     bson_reader_t *reader;
     bool eof;
-    struct replyMsg *m = calloc(1, sizeof(*m));
+    mongoReply *m = calloc(1, sizeof(*m));
     offset = mongoSnunpack(buf, 0, size, "<iiiiiqii",
                            &(m->messageLength), &(m->requestID), &(m->responseTo),
                            &(m->opCode), &(m->responseFlags), &(m->cursorID),
@@ -35,7 +35,7 @@ void * replyMsgCreateFromBytes(char *buf, size_t size) {
             m->docs[num++] = bson_copy(bs);
         }
         if (!eof || num != m->numberReturned) {
-            replyMsgFree(m);
+            mongoReplyFree(m);
             m = NULL;
         }
         bson_reader_destroy(reader);
@@ -43,8 +43,8 @@ void * replyMsgCreateFromBytes(char *buf, size_t size) {
     return m;
 }
 
-void replyMsgFree(void *p) {
-    struct replyMsg *m = p;
+void mongoReplyFree(void *p) {
+    mongoReply *m = p;
     if (!m) return;
 
     for (int i = 0; i < m->numberReturned; ++i) {
@@ -54,13 +54,12 @@ void replyMsgFree(void *p) {
     free(m);
 }
 
-bson_t *replyMsgGetBson(struct replyMsg *m, int idx) {
+bson_t *mongoReplyGetBson(mongoReply *m, int idx) {
     if (idx >= m->numberReturned) return NULL;
     return m->docs[idx];
 }
 
-//FIXME:fix the seg fault caused by bson_as_json
-int replyMsgToStr(struct replyMsg *m, char *buf, size_t len) {
+int mongoReplyToStr(mongoReply *m, char *buf, size_t len) {
     int n;
     int offset = 0;
     n = snprintf(buf+offset, len,

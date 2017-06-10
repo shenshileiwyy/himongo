@@ -95,6 +95,17 @@ int mongoAsyncFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata
                       char *db, char *col, bson_t *q, bson_t *rfield);
 int mongoAsyncJsonFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
                           char *db, char *col, char *q_js, char *rf_js);
+
+int mongoAsyncInsert(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     int32_t flags, char *db, char *col, bson_t *docs, int nr_docs);
+int mongoAsyncUpdate(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     char *db, char *col, int32_t flags, bson_t *selector, bson_t *update);
+int mongoAsyncDelete(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     char *db, char *col, int32_t flags, bson_t *selector);
+int mongoAsyncGetMore(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                      char *db, char *col, int32_t nrReturn, int64_t cursorId);
+int mongoAsyncKillCursors(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                          int64_t *ids, int nr_id);
 #ifdef __cplusplus
 }
 #endif

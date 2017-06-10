@@ -170,23 +170,24 @@ static int __mongoPushCallback(mongoAsyncContext *ac, mongoCallback *source) {
     return MONGO_OK;
 }
 
-static int __mongoShiftCallback(mongoAsyncContext *ac, struct replyMsg *rpl, mongoCallback *target) {
+static int __mongoShiftCallback(mongoAsyncContext *ac, mongoReply *rpl, mongoCallback *target) {
     mongoCallbackList *list = &ac->replies;
     mongoCallback *cb = list->head;
-    // if query with EXHAUST flag and the cursor is not zero, then we don't remove the cb from list.
-    bool no_remove = (cb->flags & QUERY_FLAG_EXHAUST && rpl && rpl->cursorID != 0);
 
     if (cb != NULL) {
-        if (!no_remove) {
-            list->head = cb->next;
-            if (cb == list->tail)
-                list->tail = NULL;
-        }
+        // if query with EXHAUST flag and the cursor is not zero, then we don't remove the cb from list.
+        bool no_remove = (cb->flags & QUERY_FLAG_EXHAUST && rpl && rpl->cursorID != 0);
 
         /* Copy callback from heap to stack */
         if (target != NULL)
             memcpy(target,cb,sizeof(*cb));
-        if (!no_remove) free(cb);
+
+        if (!no_remove) {
+            list->head = cb->next;
+            if (cb == list->tail)
+                list->tail = NULL;
+            free(cb);
+        }
         return MONGO_OK;
     }
     return MONGO_ERR;
@@ -293,32 +294,8 @@ void mongoProcessCallbacks(mongoAsyncContext *ac) {
             break;
         }
 
-        /* Even if the context is subscribed, pending regular callbacks will
-         * get a reply before pub/sub messages arrive. */
-        if (__mongoShiftCallback(ac, reply, &cb) != MONGO_OK) {
-            /*
-             * A spontaneous reply in a not-subscribed context can be the error
-             * reply that is sent when a new connection exceeds the maximum
-             * number of allowed connections on the server side.
-             *
-             * This is seen as an error instead of a regular reply because the
-             * server closes the connection after sending it.
-             *
-             * To prevent the error from being overwritten by an EOF error the
-             * connection is closed here. See issue #43.
-             *
-             * Another possibility is that the server is loading its dataset.
-             * In this case we also want to close the connection, and have the
-             * user wait until the server is ready to take our request.
-             */
-            // if (((mongoReply*)reply)->type == MONGO_REPLY_ERROR) {
-            //     c->err = MONGO_ERR_OTHER;
-            //     snprintf(c->errstr,sizeof(c->errstr),"%s",((mongoReply*)reply)->str);
-            //     c->reader->fn->freeObject(reply);
-            //     __mongoAsyncDisconnect(ac);
-            //     return;
-            // }
-        }
+        // ignore the return value
+        __mongoShiftCallback(ac, reply, &cb);
 
         if (cb.fn != NULL) {
             __mongoRunCallback(ac,&cb,reply);
@@ -494,4 +471,153 @@ int mongoAsyncJsonFindOne(mongoAsyncContext *ac, mongoCallbackFn *fn, void *priv
                           char *db, char *col, char *q_js, char *rf_js)
 {
     return mongoAsyncJsonQuery(ac,fn,privdata, 0, db, col, 0, -1, q_js, rf_js);
+}
+
+int mongoAsyncInsert(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     int32_t flags, char *db, char *col, bson_t *docs, int nr_docs)
+{
+    mongoContext *c = &ac->c;
+    mongoCallback cb;
+    int status;
+    bson_t *pp[nr_docs];
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    for (int i = 0; i < nr_docs; ++i) {
+        pp[i] = docs + i;
+    }
+    status = mongoAppendInsertMsg(c, flags, db, col, pp, nr_docs);
+    if (status != MONGO_OK) {
+        return status;
+    }
+    if (fn != NULL) {
+        status = mongoAppendGetLastErrorRequest(c, 0, db);
+        if (status != MONGO_OK) {
+            return status;
+        }
+        /* Setup callback */
+        cb.fn = fn;
+        cb.privdata = privdata;
+        cb.flags = 0;
+
+        __mongoPushCallback(ac,&cb);
+    }
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
+}
+
+int mongoAsyncUpdate(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     char *db, char *col, int32_t flags, bson_t *selector, bson_t *update)
+{
+    mongoContext *c = &ac->c;
+    mongoCallback cb;
+    int status;
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    status = mongoAppendUpdateMsg(c, db, col, flags, selector, update);
+    if (status != MONGO_OK) {
+        return status;
+    }
+    if (fn != NULL) {
+        status = mongoAppendGetLastErrorRequest(c, 0, db);
+        if (status != MONGO_OK) {
+            return status;
+        }
+        /* Setup callback */
+        cb.fn = fn;
+        cb.privdata = privdata;
+        cb.flags = 0;
+
+        __mongoPushCallback(ac,&cb);
+    }
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
+}
+
+int mongoAsyncDelete(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                     char *db, char *col, int32_t flags, bson_t *selector)
+{
+    mongoContext *c = &ac->c;
+    mongoCallback cb;
+    int status;
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    status = mongoAppendDeleteMsg(c, db, col, flags, selector);
+    if (status != MONGO_OK) {
+        return status;
+    }
+    if (fn != NULL) {
+        status = mongoAppendGetLastErrorRequest(c, 0, db);
+        if (status != MONGO_OK) {
+            return status;
+        }
+        /* Setup callback */
+        cb.fn = fn;
+        cb.privdata = privdata;
+        cb.flags = 0;
+
+        __mongoPushCallback(ac,&cb);
+    }
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
+}
+
+/*
+ * FixMe: figure out method to get last error for kill cursor request
+ */
+int mongoAsyncKillCursors(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                            int64_t *ids, int nr_id) {
+    mongoContext *c = &ac->c;
+    mongoCallback cb;
+    int status;
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    status = mongoAppendKillCursorsMsg(c, nr_id, ids);
+    if (status != MONGO_OK) {
+        return status;
+    }
+    if (fn != NULL) {
+        status = mongoAppendGetLastErrorRequest(c, 0, NULL);
+        if (status != MONGO_OK) {
+            return status;
+        }
+        /* Setup callback */
+        cb.fn = fn;
+        cb.privdata = privdata;
+        cb.flags = 0;
+
+        __mongoPushCallback(ac,&cb);
+    }
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
+}
+
+int mongoAsyncGetMore(mongoAsyncContext *ac, mongoCallbackFn *fn, void *privdata,
+                      char *db, char *col, int32_t nrReturn, int64_t cursorId)
+{
+    int status;
+    mongoContext *c = &(ac->c);
+    mongoCallback cb;
+
+    /* Don't accept new commands when the connection is about to be closed. */
+    if (c->flags & (MONGO_DISCONNECTING | MONGO_FREEING)) return MONGO_ERR;
+    status = mongoAppendGetMoreMsg(c, db, col, nrReturn, cursorId);
+    if (status != MONGO_OK) {
+        return MONGO_ERR;
+    }
+
+    /* Setup callback */
+    cb.fn = fn;
+    cb.privdata = privdata;
+    cb.flags = 0;
+
+    __mongoPushCallback(ac,&cb);
+
+    /* Always schedule a write when the write buffer is non-empty */
+    _EL_ADD_WRITE(ac);
+
+    return MONGO_OK;
 }

@@ -102,7 +102,7 @@ char **bson_extract_collection_names(bson_t *b) {
 }
 
 void freeReplyObject(void *reply) {
-    replyMsgFree(reply);
+    mongoReplyFree(reply);
 }
 
 static mongoContext *mongoContextInit(void) {
@@ -728,6 +728,10 @@ int mongoAppendCmdRequst(mongoContext *c, int32_t flags, char *db, char *q_js){
     return mongoAppendQueryMsg(c, flags, db, (char *)"$cmd", 0, -1, q, NULL);
 }
 
+int mongoAppendGetLastErrorRequest(mongoContext *c, int32_t flags, char *db) {
+    return mongoAppendCmdRequst(c, flags, db, (char*)"{\"getlasterror\": 1}");
+}
+
 /* Helper function for the mongoCommand* family of functions.
  *
  * Write a formatted command to the output buffer. If the given context is
@@ -800,7 +804,7 @@ void **mongoFindAll(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfi
     void **retv;
     size_t totalsize;
 
-    struct replyMsg *rpl = mongoQuery(c, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q, rfield);
+    mongoReply *rpl = mongoQuery(c, QUERY_FLAG_EXHAUST, db, col, 0, nrPerQuery, q, rfield);
     while(1) {
         if (n >= max_n) {
             if (pptr != buf) pptr = realloc(pptr, sizeof(void*)*max_n*2);
@@ -827,12 +831,12 @@ void **mongoFindAll(mongoContext *c, char *db, char *col, bson_t *q, bson_t *rfi
 }
 
 void* mongoDbCmd(mongoContext *c, int32_t flags, char *db, int32_t nrReturn, bson_t *q) {
-    struct replyMsg *m = mongoQuery(c, flags, db, (char *)"$cmd", 0, nrReturn, q, NULL);
+    mongoReply *m = mongoQuery(c, flags, db, (char *)"$cmd", 0, nrReturn, q, NULL);
     return m;
 }
 
 void* mongoDbJsonCmd(mongoContext *c, int flags, char *db, int32_t nrReturn, char *q_js) {
-    struct replyMsg *m = mongoQueryWithJson(c, flags, db, (char *)"$cmd", 0, nrReturn, q_js, NULL);
+    mongoReply *m = mongoQueryWithJson(c, flags, db, (char *)"$cmd", 0, nrReturn, q_js, NULL);
     return m;
 }
 
@@ -853,7 +857,7 @@ void *mongoGetCollectionNames(mongoContext *c, char *db) {
     char **namev;
     char *ns;
     int64_t cursor_id;
-    struct replyMsg *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"listCollections\": 1}");
+    mongoReply *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"listCollections\": 1}");
     cursor_id = bson_extract_int64(rpl->docs[0], (char *)"cursor.id");
     ns = bson_extract_string(rpl->docs[0], (char *)"cursor.ns");
     namev = bson_extract_collection_names(rpl->docs[0]);
@@ -875,4 +879,69 @@ void *mongoGetLastError(mongoContext *c, char *db) {
 void *mongoDropDatabase(mongoContext *c, char *db) {
     void *rpl = mongoDbJsonCmd(c, 0, db, -1, (char*)"{\"dropDatabase\": 1}");
     return rpl;
+}
+
+void *mongoInsert(mongoContext *c, int32_t flags, char *db, char *col, bson_t *docs, int nr_docs) {
+    int status;
+    bson_t *pp[nr_docs];
+    for (int i = 0; i < nr_docs; ++i) {
+        pp[i] = docs + i;
+    }
+    status = mongoAppendInsertMsg(c, flags, db, col, pp, nr_docs);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    status = mongoAppendGetLastErrorRequest(c, 0, db);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    return __mongoBlockForReply(c);
+}
+
+void *mongoUpdate(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector, bson_t *update) {
+    int status;
+    status = mongoAppendUpdateMsg(c, db, col, flags, selector, update);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    status = mongoAppendGetLastErrorRequest(c, 0, db);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    return __mongoBlockForReply(c);
+}
+
+void *mongoDelete(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector) {
+    int status;
+    status = mongoAppendDeleteMsg(c, db, col, flags, selector);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    status = mongoAppendGetLastErrorRequest(c, 0, db);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    return __mongoBlockForReply(c);
+}
+
+void mongoKillCursors(mongoContext *c, int64_t *ids, int nr_id) {
+    int status;
+    status = mongoAppendKillCursorsMsg(c, nr_id, ids);
+    if (status != MONGO_OK) {
+        return ;
+    }
+    // status = mongoAppendGetLastErrorRequest(c, 0, db);
+    // if (status != MONGO_OK) {
+    //     return NULL;
+    // }
+    // return __mongoBlockForReply(c);
+}
+
+void *mongoGetMore(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorId) {
+    int status;
+    status = mongoAppendGetMoreMsg(c, db, col, nrReturn, cursorId);
+    if (status != MONGO_OK) {
+        return NULL;
+    }
+    return __mongoBlockForReply(c);
 }

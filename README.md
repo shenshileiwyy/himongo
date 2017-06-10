@@ -10,7 +10,8 @@ To consume the synchronous API, there are only a few function calls that need to
 
 ```c
 mongoContext *mongoConnect(const char *ip, int port);
-void *mongoCommand(mongoContext *c, const char *format, ...);
+void **mongoFindAll(mongoContext *c, char *db, char *col,
+                    bson_t *q, bson_t *rfield, int32_t nrPerQuery);
 void freeReplyObject(void *reply);
 ```
 
@@ -39,78 +40,45 @@ if (c == NULL || c->err) {
 
 ### Sending commands
 
-There are several ways to issue commands to Mongo. The first that will be introduced is
-`mongoCommand`. This function takes a format similar to printf. In the simplest form,
-it is used like this:
+the following API is used to do CRUD operations synchronously.
 ```c
 reply = mongoCommand(context, "SET foo bar");
 ```
 
-The specifier `%s` interpolates a string in the command, and uses `strlen` to
-determine the length of the string:
-```c
-reply = mongoCommand(context, "SET foo %s", value);
-```
-When you need to pass binary safe strings in a command, the `%b` specifier can be
-used. Together with a pointer to the string, it requires a `size_t` length argument
-of the string:
-```c
-reply = mongoCommand(context, "SET foo %b", value, (size_t) valuelen);
-```
-Internally, Himongo splits the command in different arguments and will
-convert it to the protocol used to communicate with Mongo.
-One or more spaces separates arguments, so you can use the specifiers
-anywhere in an argument:
-```c
-reply = mongoCommand(context, "SET key:%s %s", myid, value);
-```
-
 ### Using replies
 
-The return value of `mongoCommand` holds a reply when the command was
+The return value holds a reply when the database operation was
 successfully executed. When an error occurs, the return value is `NULL` and
 the `err` field in the context will be set (see section on **Errors**).
 Once an error is returned the context cannot be reused and you should set up
 a new connection.
 
-The standard replies that `mongoCommand` are of the type `mongoReply`. The
-`type` field in the `mongoReply` should be used to test what kind of reply
-was received:
+The standard replies of database operation are of the type `mongoReply`.
+`mongoReply` has the same fields as `OP_REPLY` message.
 
-* **`MONGO_REPLY_STATUS`**:
-    * The command replied with a status reply. The status string can be accessed using `reply->str`.
-      The length of this string can be accessed using `reply->len`.
-
-* **`MONGO_REPLY_ERROR`**:
-    *  The command replied with an error. The error string can be accessed identical to `MONGO_REPLY_STATUS`.
-
-* **`MONGO_REPLY_INTEGER`**:
-    * The command replied with an integer. The integer value can be accessed using the
-      `reply->integer` field of type `long long`.
-
-* **`MONGO_REPLY_NIL`**:
-    * The command replied with a **nil** object. There is no data to access.
-
-* **`MONGO_REPLY_STRING`**:
-    * A bulk (string) reply. The value of the reply can be accessed using `reply->str`.
-      The length of this string can be accessed using `reply->len`.
-
-* **`MONGO_REPLY_ARRAY`**:
-    * A multi bulk reply. The number of elements in the multi bulk reply is stored in
-      `reply->elements`. Every element in the multi bulk reply is a `mongoReply` object as well
-      and can be accessed via `reply->element[..index..]`.
-      Mongo may reply with nested arrays but this is fully supported.
+```c
+typedef struct {
+    int32_t messageLength;                      
+    int32_t requestID;                          
+    int32_t responseTo;                         
+    int32_t opCode
+    
+    int32_t responseFlags;
+    int64_t cursorID;
+    int32_t startingFrom;
+    int32_t numberReturned;
+    bson_t **docs;
+} mongoReply;
+```
 
 Replies should be freed using the `freeReplyObject()` function.
-Note that this function will take care of freeing sub-reply objects
-contained in arrays and nested arrays, so there is no need for the user to
-free the sub replies (it is actually harmful and will corrupt the memory).
+Note that this function will take care of freeing the bson documents 
+contained in this object.
 
 **Important:** the current version of himongo (0.10.0) frees replies when the
 asynchronous API is used. This means you should not call `freeReplyObject` when
 you use this API. The reply is cleaned up by himongo _after_ the callback
-returns. This behavior will probably change in future releases, so make sure to
-keep an eye on the changelog when upgrading (see issue #39).
+returns. 
 
 ### Cleaning up
 
@@ -121,71 +89,40 @@ void mongoFree(mongoContext *c);
 This function immediately closes the socket and then frees the allocations done in
 creating the context.
 
-### Sending commands (cont'd)
-
-Together with `mongoCommand`, the function `mongoCommandArgv` can be used to issue commands.
-It has the following prototype:
-```c
-void *mongoCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen);
-```
-It takes the number of arguments `argc`, an array of strings `argv` and the lengths of the
-arguments `argvlen`. For convenience, `argvlen` may be set to `NULL` and the function will
-use `strlen(3)` on every argument to determine its length. Obviously, when any of the arguments
-need to be binary safe, the entire array of lengths `argvlen` should be provided.
-
-The return value has the same semantic as `mongoCommand`.
-
 ### Pipelining
 
-To explain how Himongo supports pipelining in a blocking connection, there needs to be
-understanding of the internal execution flow.
+you can use the following API to append request message to the
+output buffer of mongoContext object.
 
-When any of the functions in the `mongoCommand` family is called, Himongo first formats the
-command according to the Mongo protocol. The formatted command is then put in the output buffer
-of the context. This output buffer is dynamic, so it can hold any number of commands.
-After the command is put in the output buffer, `mongoGetReply` is called. This function has the
-following two execution paths:
-
-1. The input buffer is non-empty:
-    * Try to parse a single reply from the input buffer and return it
-    * If no reply could be parsed, continue at *2*
-2. The input buffer is empty:
-    * Write the **entire** output buffer to the socket
-    * Read from the socket until a single reply could be parsed
-
-The function `mongoGetReply` is exported as part of the Himongo API and can be used when a reply
-is expected on the socket. To pipeline commands, the only things that needs to be done is
-filling up the output buffer. For this cause, two commands can be used that are identical
-to the `mongoCommand` family, apart from not returning a reply:
-```c
-void mongoAppendCommand(mongoContext *c, const char *format, ...);
-void mongoAppendCommandArgv(mongoContext *c, int argc, const char **argv, const size_t *argvlen);
+```c 
+int mongoAppendUpdateMsg(mongoContext *c, char *db, char *col, int32_t flags,
+                         bson_t *selector, bson_t *update);
+int mongoAppendInsertMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                         bson_t **docs, size_t nr_docs);
+int mongoAppendQueryMsg(mongoContext *c, int32_t flags, char *db, char *col,
+                        int nrSkip, int nrReturn, bson_t *q, bson_t *rfields);
+int mongoAppendGetMoreMsg(mongoContext *c, char *db, char *col, int32_t nrReturn, int64_t cursorID);
+int mongoAppendDeleteMsg(mongoContext *c, char *db, char *col, int32_t flags, bson_t *selector);
+int mongoAppendKillCursorsMsg(mongoContext *c, int32_t nrID, int64_t *IDs);
 ```
-After calling either function one or more times, `mongoGetReply` can be used to receive the
-subsequent replies. The return value for this function is either `MONGO_OK` or `MONGO_ERR`, where
-the latter means an error occurred while reading a reply. Just as with the other commands,
-the `err` field in the context can be used to find out what the cause of this error is.
+
+after appending the request message, you can use `mongoGetReply`
+to get reply.
+
+**pls note: only Query message has response**
 
 The following examples shows a simple pipeline (resulting in only a single call to `write(2)` and
 a single call to `read(2)`):
 ```c
 mongoReply *reply;
-mongoAppendCommand(context,"SET foo bar");
-mongoAppendCommand(context,"GET foo");
+mongoAppendQueryMsg(c, 0, "test, "col1, 0, 0, NULL, NULL);
+mongoAppendQueryMsg(c, 0, "test, "col2, 0, 0, NULL, NULL);
 mongoGetReply(context,&reply); // reply for SET
 freeReplyObject(reply);
 mongoGetReply(context,&reply); // reply for GET
 freeReplyObject(reply);
 ```
-This API can also be used to implement a blocking subscriber:
-```c
-reply = mongoCommand(context,"SUBSCRIBE foo");
-freeReplyObject(reply);
-while(mongoGetReply(context,&reply) == MONGO_OK) {
-    // consume message
-    freeReplyObject(reply);
-}
-```
+
 ### Errors
 
 When a function call is not successful, depending on the function either `NULL` or `MONGO_ERR` is
@@ -343,9 +280,6 @@ will hold the status as a vanilla C string. However, the functions that are
 responsible for creating instances of the `mongoReply` can be customized by
 setting the `fn` field on the `mongoReader` struct. This should be done
 immediately after creating the `mongoReader`.
-
-For example, [himongo-rb](https://github.com/pietern/himongo-rb/blob/master/ext/himongo_ext/reader.c)
-uses customized reply object functions to create Ruby objects.
 
 ### Reader max buffer
 

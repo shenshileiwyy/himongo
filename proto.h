@@ -2,11 +2,11 @@
 // Created by Yu Yang <yyangplus@NOSPAM.gmail.com> on 2017-05-18
 //
 
-#ifndef _PROTO_H_
-#define _PROTO_H_ 1
+#ifndef _HIMONGO_PROTO_H_
+#define _HIMONGO_PROTO_H_ 1
 
 #include <stdint.h>
-#include <bson.h>
+#include "libbson/src/bson/bson.h"
 
 #define MONGO_MAX_DBNAME_LEN  64
 #define MONGO_MAX_NS_LEN      120
@@ -49,42 +49,17 @@
     int32_t responseTo;                         \
     int32_t opCode
 
-struct updateMsg {
-    MSG_HEADER;
-    int32_t zero;
-    char *coll_name;
-    int32_t flags;
-    bson_t *selector;
-    bson_t *update;
-};
-
-struct insertMsg {
-    MSG_HEADER;
-    int32_t flags;
-    char *coll_name;
-    bson_t *docs;
-};
-
-struct queryMsg {
-    MSG_HEADER;
-    int32_t flags;
-    char *coll_name;
-    int32_t nrSkip;
-    int32_t nrReturn;
-    bson_t *query;
-    bson_t *returnFields;
-};
-
-struct replyMsg {
+/*!
+ * OP_REPLY message
+ */
+typedef struct replyMsg {
     MSG_HEADER;
     int32_t responseFlags;
     int64_t cursorID;
     int32_t startingFrom;
     int32_t numberReturned;
     bson_t **docs;
-} replyMsg;
-
-typedef struct replyMsg mongoReply;
+} mongoReply;
 
 struct mongoCursor {
     char *namespace[MONGO_MAX_NS_LEN];
@@ -92,7 +67,9 @@ struct mongoCursor {
     int64_t cursorID;
 };
 
-void * replyMsgCreateFromBytes(char *buf, size_t size);
-void replyMsgFree(void *m);
-int replyMsgToStr(struct replyMsg *m, char *buf, size_t len);
-#endif /* _PROTO_H_ */
+void * mongoReplyCreateFromBytes(char *buf, size_t size);
+void mongoReplyFree(void *m);
+bson_t *mongoReplyGetBson(mongoReply *m, int idx);
+int mongoReplyToStr(mongoReply *m, char *buf, size_t len);
+
+#endif /* _HIMONGO_PROTO_H_ */
