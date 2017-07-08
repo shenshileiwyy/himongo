@@ -62,6 +62,10 @@ typedef struct mongoAsyncContext {
     mongoCallbackList replies;
 } mongoAsyncContext;
 
+static inline bool mongoAsyncIsConnected(mongoAsyncContext *ac) {
+    return (ac->c.flags & MONGO_CONNECTED)? true:false;
+}
+
 /* Functions that proxy to himongo */
 mongoAsyncContext *mongoAsyncConnect(const char *ip, int port);
 mongoAsyncContext *mongoAsyncConnectBind(const char *ip, int port, const char *source_addr);
