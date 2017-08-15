@@ -75,6 +75,8 @@ int mongoReplyToStr(mongoReply *m, char *buf, size_t len) {
         n = snprintf(buf+offset, len-offset, "DOC %d\n%s\n\n",i, ss);
         offset += n;
         bson_free(ss);
+        if (offset >= len-1) return MONGO_ERR;
     }
     return MONGO_OK;
 }
+
