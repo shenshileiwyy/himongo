@@ -128,7 +128,7 @@ int mongoReaderGetReply(mongoReader *r, void **reply) {
     if (r->pktlen == 0) r->pktlen = load32le(r->buf+r->pos);
     if (r->len - r->pos < r->pktlen) return MONGO_OK;
     /* create a reply object */
-    r->reply = r->fn->createReply(r->buf+r->pos, r->len-r->pos);
+    r->reply = r->fn->createReply(r->buf+r->pos, r->pktlen);
 
     r->pos += r->pktlen;
     r->pktlen = 0;

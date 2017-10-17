@@ -28,19 +28,25 @@ void * mongoReplyCreateFromBytes(char *buf, size_t size) {
         m->docs = calloc(1, m->numberReturned * sizeof(bson_t *));
         reader = bson_reader_new_from_data((uint8_t *)(buf+offset), size-offset);
         while((bs = (bson_t *)bson_reader_read(reader, &eof))) {
+            if (num >= m->numberReturned) {
+                goto invalid;
+            }
             /*
-             * since the bson object returned by bson_reader_read is a static filed in bson_reader_t struct,
+             * since the bson object returned by bson_reader_read is a
+             * static field in bson_reader_t struct,
              * so we must copy this bson object.
              */
             m->docs[num++] = bson_copy(bs);
         }
         if (!eof || num != m->numberReturned) {
-            mongoReplyFree(m);
-            m = NULL;
+            goto invalid;
         }
         bson_reader_destroy(reader);
     }
     return m;
+invalid:
+    mongoReplyFree(m);
+    return NULL;
 }
 
 void mongoReplyFree(void *p) {
@@ -79,4 +85,3 @@ int mongoReplyToStr(mongoReply *m, char *buf, size_t len) {
     }
     return MONGO_OK;
 }
-
